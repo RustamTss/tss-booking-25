@@ -1,0 +1,26 @@
+---
+alwaysApply: true
+---
+
+# Product Sync Platform - Project Overview
+
+## 🎯 What This Is
+Multi-platform product synchronization system with microservice architecture.
+
+## 🏗️ Core Structure
+- **Backend**: [main.go](mdc:backend/main.go) → [routes/routes.go](mdc:backend/routes/routes.go) (50+ endpoints)
+- **Frontend**: [App.jsx](mdc:frontend/src/App.jsx) → [pages/](mdc:frontend/src/pages/) (12 screens)  
+- **Database**: [database/connection.go](mdc:backend/database/connection.go) → MongoDB
+- **Docker**: [docker-compose.yml](mdc:docker-compose.yml) (3 services)
+
+## ✅ Working Integrations
+- **Billz.io**: 609 products synced
+- **Yandex Market**: Full API integration with Api-Key auth
+- **OpenAI**: GPT-4 content generation
+- **Live Sync**: Auto-sync every 60-120 seconds
+
+## 🔑 Key Files
+- Entry: [main.go](mdc:backend/main.go), [App.jsx](mdc:frontend/src/App.jsx)
+- API: [routes/routes.go](mdc:backend/routes/routes.go)
+- Models: [models/](mdc:backend/models/)
+- Config: [docker-compose.yml](mdc:docker-compose.yml)

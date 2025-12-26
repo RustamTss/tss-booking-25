@@ -1,0 +1,55 @@
+---
+globs: backend/**/*.go
+---
+
+# Go Development Patterns
+
+## 🔧 Handler Structure Pattern
+```go
+// Пример: backend/handlers/auth.go:22-35
+func (h *AuthHandlers) Login(c *gin.Context) {
+    var req LoginRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"message": "Invalid request"})
+        return
+    }
+    // ... business logic
+    c.JSON(200, response)
+}
+```
+
+## 🛡️ JWT Middleware Usage
+```go
+// В routes/routes.go:49
+products.Use(jwtMiddleware.AuthRequired())
+
+// В handler получение user_id:
+userID := c.GetString("user_id")
+objectID, _ := primitive.ObjectIDFromHex(userID)
+```
+
+## 📊 MongoDB Patterns
+```go
+// User isolation pattern:
+filter := bson.M{
+    "user_id": objectID,
+    "status": "active",
+}
+
+// Update with timestamps:
+update := bson.M{
+    "$set": bson.M{
+        "updated_at": time.Now(),
+        "field": value,
+    },
+}
+```
+
+## 🎯 Error Handling
+```go
+// Consistent error responses:
+c.JSON(http.StatusBadRequest, gin.H{
+    "message": "Validation failed",
+    "error": err.Error(),
+})
+```

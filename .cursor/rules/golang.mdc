@@ -1,0 +1,36 @@
+---
+globs: *.go
+alwaysApply: false
+---
+### Tracing and Monitoring Best Practices:
+- Trace all incoming requests and propagate context through internal and external calls.
+- Use middleware to instrument HTTP and gRPC endpoints automatically.
+- Annotate slow, critical, or error-prone paths with custom spans.
+- Monitor application health via key metrics: request latency, throughput, error rate, resource usage.
+- Define SLIs (e.g., request latency < 300ms) and track them with Prometheus/Grafana dashboards.
+- Alert on key conditions (e.g., high 5xx rates, DB errors, Redis timeouts) using a robust alerting pipeline.
+- Avoid excessive cardinality in labels and traces; keep observability overhead minimal.
+- Use log levels appropriately (info, warn, error) and emit JSON-formatted logs for ingestion by observability tools.
+- Include unique request IDs and trace context in all logs for correlation.
+
+### Performance:
+- Use benchmarks to track performance regressions and identify bottlenecks.
+- Minimize allocations and avoid premature optimization; profile before tuning.
+- Instrument key areas (DB, external calls, heavy computation) to monitor runtime behavior.
+
+### Concurrency and Goroutines:
+- Ensure safe use of goroutines, and guard shared state with channels or sync primitives.
+- Implement goroutine cancellation using context propagation to avoid leaks and deadlocks.
+
+### Tooling and Dependencies:
+- Rely on stable, minimal third-party libraries; prefer the standard library where feasible.
+- Use Go modules for dependency management and reproducibility.
+- Version-lock dependencies for deterministic builds.
+- Integrate linting, testing, and security checks in CI pipelines.
+
+### Key Conventions:
+1. Prioritize readability, simplicity, and maintainability.
+2. Design for change: isolate business logic and minimize framework lock-in.
+3. Emphasize clear boundaries and dependency inversion.
+4. Ensure all behavior is observable, testable, and documented.
+5. Automate workflows for testing, building, and deployment.

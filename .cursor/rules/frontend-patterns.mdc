@@ -1,0 +1,69 @@
+---
+globs: frontend/src/**/*.jsx
+---
+
+# React Frontend Patterns
+
+## 📱 Component Structure
+```jsx
+// Example: YandexProductEdit.jsx:50-80
+const [formData, setFormData] = useState({
+    name_ru: product?.name_ru || '',
+    price: product?.price || '',
+    // ... all fields as strings
+});
+
+const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+        await axios.put(`/api/yandex-products/${id}`, formData);
+        // Success handling
+    } catch (error) {
+        // Error handling
+    }
+};
+```
+
+## 🔄 API Integration Pattern
+```jsx
+// Base URL configuration
+const API_BASE = 'http://localhost:8080/api';
+
+// JWT Authorization
+const token = localStorage.getItem('token');
+const config = {
+    headers: { Authorization: `Bearer ${token}` }
+};
+
+// API calls
+const response = await axios.get(`${API_BASE}/products`, config);
+```
+
+## 🎨 Conditional Rendering
+```jsx
+// Example: YandexProductEdit.jsx:500-520
+{formData.brand === 'other' && (
+    <input
+        type="text"
+        value={formData.custom_brand}
+        onChange={(e) => setFormData({
+            ...formData, 
+            custom_brand: e.target.value
+        })}
+    />
+)}
+```
+
+## 📊 Form State Management
+```jsx
+// Complex form updates (YandexProductEdit.jsx pattern)
+const updateNestedField = (section, field, value) => {
+    setFormData(prev => ({
+        ...prev,
+        [section]: {
+            ...prev[section],
+            [field]: value
+        }
+    }));
+};
+```

@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: ./backend
+    environment:
+      - APP_PORT=8090
+      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_DB=truckshop
+      - JWT_SECRET=dev_secret_change_me
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TZ=America/New_York
+    depends_on:
+      - mongo
+    ports:
+      - "8090:8090"
+
+  frontend:
+    build: ./frontend
+    environment:
+      - VITE_API_URL=http://localhost:8090
+    depends_on:
+      - backend
+    ports:
+      - "5190:5190"
+    command: ["npm", "run", "dev", "--", "--host", "--port", "5190"]
+
+volumes:
+  mongo_data:
+

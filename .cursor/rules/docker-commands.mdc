@@ -1,0 +1,51 @@
+---
+globs: *.sh,docker-compose.yml,Dockerfile
+---
+
+# Docker Commands & Scripts
+
+## 🚀 Quick Start Commands
+```bash
+# Full setup (setup.sh:339 lines)
+./setup.sh
+
+# Start with rebuild (manage.sh:324 lines)  
+./manage.sh start
+
+# Check status (status.sh:209 lines)
+./status.sh
+
+# View logs (logs.sh:53 lines)
+./logs.sh follow
+./logs.sh backend
+```
+
+## 🐳 Docker Compose Services
+```yaml
+# docker-compose.yml structure:
+services:
+  mongodb:    # Port 27017, healthcheck with mongosh
+  backend:    # Port 8080, depends on mongodb
+  frontend:   # Port 3000→80, depends on backend
+```
+
+## 🔧 Development Commands
+```bash
+# Restart specific service
+docker-compose restart backend
+
+# View real-time logs
+docker-compose logs -f backend
+
+# Execute commands in container
+docker exec -it product_sync_backend sh
+docker exec -it product_sync_mongo mongosh product_sync
+
+# Rebuild without cache
+docker-compose build --no-cache
+```
+
+## 📊 Health Checks
+- **MongoDB**: `mongosh --eval "db.adminCommand('ping')"`
+- **Backend**: `wget http://localhost:8080/health`
+- **Frontend**: `wget http://localhost:80`
