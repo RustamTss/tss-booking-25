@@ -6,10 +6,13 @@ services:
     restart: unless-stopped
     volumes:
       - mongo_data:/data/db
-      - ./mongo-init:/docker-entrypoint-initdb-d:ro
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:?set}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:?set}
+      - MONGO_APP_DB=${MONGO_APP_DB:-shop}
+      - MONGO_APP_USER=${MONGO_APP_USER:-shop_user}
+      - MONGO_APP_PASSWORD=${MONGO_APP_PASSWORD:-changeMe}
 
   backend:
     build:
