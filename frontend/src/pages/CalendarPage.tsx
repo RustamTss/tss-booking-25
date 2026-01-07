@@ -1,536 +1,711 @@
-import { useMemo, useState } from 'react'
+import {
+	ArrowPathIcon,
+	ArrowsPointingOutIcon,
+} from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Calendar as BigCalendar,
-  Views,
-  dateFnsLocalizer,
-  type SlotInfo,
-  type Event as RBCEvent,
-  type View,
-} from 'react-big-calendar'
-// @ts-ignore partial types for addon
-import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
-import { format, parse, startOfWeek, getDay } from 'date-fns'
+	format,
+	getDay,
+	isSameDay,
+	parse,
+	startOfDay,
+	startOfWeek,
+} from 'date-fns'
 import { enUS } from 'date-fns/locale'
-import Modal from 'react-modal'
-import { api } from '../api/client'
-import type { Bay, Booking, BookingStatus, Company, Service, Technician, Vehicle } from '../types'
-import 'react-big-calendar/lib/css/react-big-calendar.css'
+import { useEffect, useMemo, useState } from 'react'
+import {
+	Calendar as BigCalendar,
+	Views,
+	dateFnsLocalizer,
+	type Components as RBCComponents,
+	type Event as RBCEvent,
+	type SlotInfo,
+	type View,
+} from 'react-big-calendar'
+import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
+import 'react-big-calendar/lib/css/react-big-calendar.css'
+import { api } from '../api/client'
+import CalendarMenuDropdown from '../components/calendar/CalendarMenuDropdown'
+import FullWidthModal from '../components/calendar/FullWidthModal'
+import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
+import CustomSelect, { type Option } from '../components/shared/CustomSelect'
+import CreateButton from '../components/shared/ui/CreateButton'
+import type {
+	Bay,
+	Booking,
+	BookingStatus,
+	Company,
+	Technician,
+	Vehicle,
+} from '../types'
 
 type ViewMode = 'day' | 'week' | 'month' | 'agenda'
 
 const locales = {
-  'en-US': enUS,
+	'en-US': enUS,
 }
 
 const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
-  getDay,
-  locales,
+	format,
+	parse,
+	startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 0 }),
+	getDay,
+	locales,
 })
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DnDCalendar = withDragAndDrop(BigCalendar as any)
 
-function computeRange(view: ViewMode) {
-  const now = new Date()
-  const start = new Date(now)
-  const end = new Date(now)
-  if (view === 'day') {
-    end.setDate(end.getDate() + 1)
-  } else if (view === 'week') {
-    start.setDate(start.getDate() - 1)
-    end.setDate(end.getDate() + 7)
-  } else if (view === 'month') {
-    start.setDate(1)
-    end.setMonth(end.getMonth() + 1)
-  } else {
-    start.setDate(start.getDate() - 7)
-    end.setDate(end.getDate() + 30)
-  }
-  return { from: start.toISOString(), to: end.toISOString() }
+function computeRange(currentDate: Date, view: ViewMode) {
+	// Normalize ranges to midnight boundaries to avoid missing AM events
+	if (view === 'day') {
+		const s = startOfDay(currentDate)
+		const e = new Date(s)
+		e.setDate(e.getDate() + 1)
+		return { from: s.toISOString(), to: e.toISOString() }
+	}
+	if (view === 'week') {
+		const ws = startOfWeek(currentDate, { weekStartsOn: 0 })
+		const s = startOfDay(ws)
+		const e = new Date(s)
+		e.setDate(e.getDate() + 7)
+		return { from: s.toISOString(), to: e.toISOString() }
+	}
+	if (view === 'month') {
+		const s = startOfDay(
+			new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+		)
+		const e = new Date(s)
+		e.setMonth(e.getMonth() + 1)
+		return { from: s.toISOString(), to: e.toISOString() }
+	}
+	// agenda (open range: one week back, 30 days forward)
+	const s = startOfDay(new Date(currentDate))
+	s.setDate(s.getDate() - 7)
+	const e = startOfDay(new Date(currentDate))
+	e.setDate(e.getDate() + 30)
+	return { from: s.toISOString(), to: e.toISOString() }
 }
 
 function CalendarPage() {
-  const [view, setView] = useState<ViewMode>('week')
-  const [form, setForm] = useState({
-    title: '',
-    description: '',
-    vehicle_id: '',
-    service_ids: [] as string[],
-    bay_id: '',
-    technician_ids: [] as string[],
-    company_id: '',
-    start: '',
-    end: '',
-    status: 'open' as BookingStatus,
-    notes: '',
-  })
-  const [modalOpen, setModalOpen] = useState(false)
-  const [fullscreen, setFullscreen] = useState(false)
-  const queryClient = useQueryClient()
-  const range = useMemo(() => computeRange(view), [view])
+	const [view, setView] = useState<ViewMode>('month')
+	const [date, setDate] = useState<Date>(new Date())
+	const [editingId, setEditingId] = useState<string | null>(null)
+	const [form, setForm] = useState({
+		complaint: '',
+		description: '',
+		fullbay_service_id: '',
+		vehicle_id: '',
+		bay_id: '',
+		technician_ids: [] as string[],
+		company_id: '',
+		start: '',
+		end: '',
+		status: 'open' as BookingStatus,
+		notes: '',
+	})
+	const [modalOpen, setModalOpen] = useState(false)
+	const [fullscreen, setFullscreen] = useState(false)
+	// Month view "+X more" dropdown state
+	const [moreState, setMoreState] = useState<{
+		open: boolean
+		events: RBCEvent[]
+		rect: DOMRect | null
+		date: Date | null
+	}>({ open: false, events: [], rect: null, date: null })
+	// Filters
+	const [filterBay, setFilterBay] = useState<string>('')
+	const [filterTech, setFilterTech] = useState<string>('')
+	const [filterCompany, setFilterCompany] = useState<string>('')
+	const queryClient = useQueryClient()
+	const range = useMemo(() => computeRange(date, view), [date, view])
 
-  const [serviceSearch, setServiceSearch] = useState('')
-  const [techSearch, setTechSearch] = useState('')
-  const servicesQuery = useQuery({ queryKey: ['services'], queryFn: async () => (await api.get<Service[]>('/api/services')).data })
-  const baysQuery = useQuery({ queryKey: ['bays'], queryFn: async () => (await api.get<Bay[]>('/api/bays')).data })
-  const techsQuery = useQuery({ queryKey: ['technicians'], queryFn: async () => (await api.get<Technician[]>('/api/technicians')).data })
-  const vehiclesQuery = useQuery({ queryKey: ['vehicles'], queryFn: async () => (await api.get<Vehicle[]>('/api/vehicles')).data })
-  const companiesQuery = useQuery({ queryKey: ['companies'], queryFn: async () => (await api.get<Company[]>('/api/companies')).data })
+	// removed local text filters (now using dropdown filters)
+	const baysQuery = useQuery({
+		queryKey: ['bays'],
+		queryFn: async () => (await api.get<Bay[]>('/api/bays')).data,
+	})
+	const techsQuery = useQuery({
+		queryKey: ['technicians'],
+		queryFn: async () => (await api.get<Technician[]>('/api/technicians')).data,
+	})
+	const vehiclesQuery = useQuery({
+		queryKey: ['vehicles'],
+		queryFn: async () => (await api.get<Vehicle[]>('/api/vehicles')).data,
+	})
+	const companiesQuery = useQuery({
+		queryKey: ['companies'],
+		queryFn: async () => (await api.get<Company[]>('/api/companies')).data,
+	})
+	const bayOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All bays', value: '' }] as Option<string>[]).concat(
+				(baysQuery.data ?? []).map(b => ({ label: b.name, value: b.id }))
+			),
+		[baysQuery.data]
+	)
+	const techOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All technicians', value: '' }] as Option<string>[]).concat(
+				(techsQuery.data ?? []).map(t => ({ label: t.name, value: t.id }))
+			),
+		[techsQuery.data]
+	)
+	const companyOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All companies', value: '' }] as Option<string>[]).concat(
+				(companiesQuery.data ?? []).map(c => ({ label: c.name, value: c.id }))
+			),
+		[companiesQuery.data]
+	)
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['agenda', range],
-    queryFn: async () => {
-      const res = await api.get<Booking[]>('/api/bookings/agenda', { params: range })
-      return res.data
-    },
-  })
+	const { data, isLoading, isError } = useQuery({
+		queryKey: ['agenda', range],
+		queryFn: async () => {
+			const res = await api.get<Booking[]>('/api/bookings/agenda', {
+				params: range,
+			})
+			return res.data
+		},
+	})
 
-  const mutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        ...form,
-        company_id: form.company_id || undefined,
-        start: new Date(form.start).toISOString(),
-        end: form.end ? new Date(form.end).toISOString() : undefined,
-      }
-      await api.post('/api/bookings', payload)
-      setModalOpen(false)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agenda'] })
-      queryClient.invalidateQueries({ queryKey: ['bookings'] })
-      setForm({
-        title: '',
-        description: '',
-        vehicle_id: '',
-        service_ids: [],
-        bay_id: '',
-        technician_ids: [],
-        company_id: '',
-        start: '',
-        end: '',
-        status: 'open',
-        notes: '',
-      })
-    },
-  })
+	// Align Day view's visible date with the first returned event so header and data match
+	useEffect(() => {
+		if (view !== 'day') return
+		if (!Array.isArray(data) || data.length === 0) return
+		const firstDate = startOfDay(new Date(data[0].start))
+		if (!isSameDay(firstDate, date)) {
+			setDate(firstDate)
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [view, data])
 
-  const events = useMemo<RBCEvent[]>(() => {
-    if (!data) return []
-    return data.map((item) => ({
-      id: item.id,
-      title: item.title,
-      start: new Date(item.start),
-      end: item.end ? new Date(item.end) : new Date(new Date(item.start).getTime() + 60 * 60 * 1000),
-      resource: item,
-    }))
-  }, [data])
+	const createMutation = useMutation({
+		mutationFn: async () => {
+			const payload = {
+				complaint: form.complaint || undefined,
+				description: form.description,
+				fullbay_service_id: form.fullbay_service_id || undefined,
+				vehicle_id: form.vehicle_id,
+				bay_id: form.bay_id,
+				technician_ids: form.technician_ids,
+				company_id: form.company_id || undefined,
+				start: new Date(form.start).toISOString(),
+				end: form.end ? new Date(form.end).toISOString() : undefined,
+				status: 'open' as BookingStatus,
+				notes: '',
+			}
+			await api.post('/api/bookings', payload)
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['agenda'] })
+			queryClient.invalidateQueries({ queryKey: ['bookings'] })
+			setModalOpen(false)
+			setEditingId(null)
+			setForm({
+				complaint: '',
+				description: '',
+				fullbay_service_id: '',
+				vehicle_id: '',
+				bay_id: '',
+				technician_ids: [],
+				company_id: '',
+				start: '',
+				end: '',
+				status: 'open',
+				notes: '',
+			})
+		},
+	})
+	const updateMutation = useMutation({
+		mutationFn: async (id: string) => {
+			const payload = {
+				complaint: form.complaint || undefined,
+				description: form.description,
+				fullbay_service_id: form.fullbay_service_id || undefined,
+				vehicle_id: form.vehicle_id,
+				bay_id: form.bay_id,
+				technician_ids: form.technician_ids,
+				company_id: form.company_id || undefined,
+				start: new Date(form.start).toISOString(),
+				end: form.end ? new Date(form.end).toISOString() : undefined,
+				// do not set status to avoid unintended resets
+				notes: '',
+			}
+			await api.put(`/api/bookings/${id}`, payload)
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['agenda'] })
+			queryClient.invalidateQueries({ queryKey: ['bookings'] })
+			setModalOpen(false)
+			setEditingId(null)
+		},
+	})
 
-  const handleSlot = (slot: SlotInfo) => {
-    setForm((prev) => ({
-      ...prev,
-      start: slot.start.toISOString().slice(0, 16),
-      end: slot.end ? slot.end.toISOString().slice(0, 16) : '',
-    }))
-    setModalOpen(true)
-  }
+	// Custom header for the time gutter (top-left empty cell in day/week views)
+	const TimeGutterHeader = () => (
+		<div className='pt-4'>
+			<span className='inline-flex items-center rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold text-white'>
+				Unclosed
+			</span>
+		</div>
+	)
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">Календарь бронирований</h1>
-          <p className="text-sm text-slate-600">День/неделя/месяц/agenda с открытыми слотами</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {(['day', 'week', 'month', 'agenda'] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setView(mode)}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${
-                view === mode ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-200'
-              }`}
-              aria-label={`Switch to ${mode}`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-      </div>
+	const mainCalendarComponents = {
+		popup: () => null,
+		timeGutterHeader: TimeGutterHeader,
+	} as unknown as RBCComponents<RBCEvent, object>
+	const fullscreenCalendarComponents: RBCComponents<RBCEvent, object> = {
+		timeGutterHeader: TimeGutterHeader,
+	}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Создать бронирование</h2>
-        <p className="text-xs text-slate-500">Двойной клик по календарю проставит даты</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <input
-            required
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Заголовок"
-            aria-label="Заголовок"
-          />
-          <input
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Описание"
-            aria-label="Описание"
-          />
-          <select
-            value={form.vehicle_id}
-            onChange={(e) => setForm({ ...form, vehicle_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Выбрать транспорт</option>
-            {vehiclesQuery.data?.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.plate || v.vin} ({v.type})
-              </option>
-            ))}
-          </select>
-          <select
-            value={form.company_id}
-            onChange={(e) => setForm({ ...form, company_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Без компании</option>
-            {companiesQuery.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <div className="space-y-1">
-            <input
-              value={serviceSearch}
-              onChange={(e) => setServiceSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="Поиск сервисов..."
-            />
-            <select
-              multiple
-              value={form.service_ids}
-              onChange={(e) => setForm({ ...form, service_ids: Array.from(e.target.selectedOptions, (o) => o.value) })}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            >
-              {servicesQuery.data
-                ?.filter((s) => s.name.toLowerCase().includes(serviceSearch.toLowerCase()))
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} (${(s.price_cents / 100).toFixed(2)})
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <input
-              value={techSearch}
-              onChange={(e) => setTechSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="Поиск механиков..."
-            />
-            <select
-              multiple
-              value={form.technician_ids}
-              onChange={(e) => setForm({ ...form, technician_ids: Array.from(e.target.selectedOptions, (o) => o.value) })}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            >
-              {techsQuery.data
-                ?.filter((t) => t.name.toLowerCase().includes(techSearch.toLowerCase()))
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <select
-            value={form.bay_id}
-            onChange={(e) => setForm({ ...form, bay_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Бей</option>
-            {baysQuery.data?.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} (cap {b.capacity})
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              type="datetime-local"
-              value={form.start}
-              onChange={(e) => setForm({ ...form, start: e.target.value })}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              aria-label="start datetime"
-            />
-            <input
-              type="datetime-local"
-              value={form.end}
-              onChange={(e) => setForm({ ...form, end: e.target.value })}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              aria-label="end datetime"
-            />
-          </div>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            className="sm:col-span-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Примечания / проблемы"
-            aria-label="notes"
-            rows={2}
-          />
-        </div>
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-            aria-label="Create booking"
-          >
-            {mutation.isPending ? 'Создаем...' : 'Создать'}
-          </button>
-        </div>
-      </section>
+	const events = useMemo<RBCEvent[]>(() => {
+		if (!data) return []
+		const vehicles = vehiclesQuery.data ?? []
+		const bays = baysQuery.data ?? []
+		const techs = techsQuery.data ?? []
 
-      <section
-        className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${
-          fullscreen ? 'fixed inset-0 z-50 bg-white flex flex-col' : ''
-        }`}
-        style={fullscreen ? { padding: '16px' } : undefined}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">События ({view})</h2>
-            <p className="text-xs text-slate-500">Двойной клик по событию заполняет форму</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFullscreen((v) => !v)}
-            className="rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-          >
-            {fullscreen ? 'Свернуть' : 'Во весь экран'}
-          </button>
-        </div>
-        {isLoading ? <p className="text-sm text-slate-600">Загружаем...</p> : null}
-        {isError ? <p className="text-sm text-rose-600">Не удалось загрузить</p> : null}
-        <div className="mt-3" style={{ height: fullscreen ? 'calc(100vh - 140px)' : 500 }}>
-          <DnDCalendar
-            localizer={localizer}
-            events={events}
-            view={view}
-            onView={(v: View) => setView(v as ViewMode)}
-            defaultView={Views.WEEK}
-            views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
-            style={{ height: '100%' }}
-            onDoubleClickEvent={(event: RBCEvent) => {
-              const booking = event.resource as Booking
-              setForm((prev) => ({
-                ...prev,
-                title: booking.title,
-                description: booking.description,
-                vehicle_id: booking.vehicle_id,
-                company_id: booking.company_id,
-                service_ids: booking.service_ids,
-                technician_ids: booking.technician_ids,
-                bay_id: booking.bay_id,
-                start: booking.start.slice(0, 16),
-                end: booking.end ? booking.end.slice(0, 16) : '',
-                status: booking.status,
-                notes: booking.notes,
-              }))
-            }}
-            selectable
-            onSelectSlot={handleSlot}
-            onEventDrop={async ({ event, start, end }) => {
-              const booking = event.resource as Booking
-              const startIso = (start instanceof Date ? start : new Date(start)).toISOString()
-              const endIso = end ? (end instanceof Date ? end : new Date(end)).toISOString() : undefined
-              await api.put(`/api/bookings/${booking.id}`, {
-                ...booking,
-                start: startIso,
-                end: endIso,
-              })
-              queryClient.invalidateQueries({ queryKey: ['agenda'] })
-              queryClient.invalidateQueries({ queryKey: ['bookings'] })
-            }}
-            onEventResize={async ({ event, start, end }) => {
-              const booking = event.resource as Booking
-              const startIso = (start instanceof Date ? start : new Date(start)).toISOString()
-              const endIso = end ? (end instanceof Date ? end : new Date(end)).toISOString() : undefined
-              await api.put(`/api/bookings/${booking.id}`, {
-                ...booking,
-                start: startIso,
-                end: endIso,
-              })
-              queryClient.invalidateQueries({ queryKey: ['agenda'] })
-              queryClient.invalidateQueries({ queryKey: ['bookings'] })
-            }}
-          />
-        </div>
-      </section>
+		return data
+			.filter(item => (filterBay ? item.bay_id === filterBay : true))
+			.filter(item =>
+				filterCompany ? item.company_id === filterCompany : true
+			)
+			.filter(item =>
+				filterTech ? item.technician_ids?.includes(filterTech) : true
+			)
+			.map(item => {
+				const v = vehicles.find(v => v.id === item.vehicle_id)
+				const plate = v?.plate || v?.vin || ''
+				const bay = bays.find(b => b.id === item.bay_id)?.name || ''
+				const techNames = (item.technician_ids || [])
+					.map(id => techs.find(t => t.id === id)?.name)
+					.filter(Boolean)
+					.join(', ')
+				return {
+					id: item.id,
+					title: [techNames, plate, bay].filter(Boolean).join(' · '),
+					start: new Date(item.start),
+					end: item.end
+						? new Date(item.end)
+						: new Date(new Date(item.start).getTime() + 60 * 60 * 1000),
+					resource: item,
+				} as RBCEvent
+			})
+	}, [
+		data,
+		vehiclesQuery.data,
+		baysQuery.data,
+		techsQuery.data,
+		filterBay,
+		filterTech,
+		filterCompany,
+	])
 
-      <Modal
-        isOpen={modalOpen}
-        onRequestClose={() => setModalOpen(false)}
-        ariaHideApp={false}
-        className="relative mx-auto mt-10 w-full max-w-2xl rounded-xl bg-white p-6 shadow-2xl"
-        overlayClassName="fixed inset-0 z-50 bg-black/50"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900">Быстрое бронирование</h3>
-          <button
-            type="button"
-            onClick={() => setModalOpen(false)}
-            className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-          >
-            Закрыть
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <input
-            required
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Заголовок"
-          />
-          <input
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Описание"
-          />
-          <select
-            value={form.vehicle_id}
-            onChange={(e) => setForm({ ...form, vehicle_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Выбрать транспорт</option>
-            {vehiclesQuery.data?.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.plate || v.vin} ({v.type})
-              </option>
-            ))}
-          </select>
-          <select
-            value={form.company_id}
-            onChange={(e) => setForm({ ...form, company_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Компания</option>
-            {companiesQuery.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <div className="space-y-1">
-            <input
-              value={serviceSearch}
-              onChange={(e) => setServiceSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="Поиск сервисов..."
-            />
-            <select
-              multiple
-              value={form.service_ids}
-              onChange={(e) => setForm({ ...form, service_ids: Array.from(e.target.selectedOptions, (o) => o.value) })}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            >
-              {servicesQuery.data
-                ?.filter((s) => s.name.toLowerCase().includes(serviceSearch.toLowerCase()))
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} (${(s.price_cents / 100).toFixed(2)})
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <input
-              value={techSearch}
-              onChange={(e) => setTechSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="Поиск механиков..."
-            />
-            <select
-              multiple
-              value={form.technician_ids}
-              onChange={(e) => setForm({ ...form, technician_ids: Array.from(e.target.selectedOptions, (o) => o.value) })}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            >
-              {techsQuery.data
-                ?.filter((t) => t.name.toLowerCase().includes(techSearch.toLowerCase()))
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <select
-            value={form.bay_id}
-            onChange={(e) => setForm({ ...form, bay_id: e.target.value })}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          >
-            <option value="">Бей</option>
-            {baysQuery.data?.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} (cap {b.capacity})
-              </option>
-            ))}
-          </select>
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              type="datetime-local"
-              value={form.start}
-              onChange={(e) => setForm({ ...form, start: e.target.value })}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-            <input
-              type="datetime-local"
-              value={form.end}
-              onChange={(e) => setForm({ ...form, end: e.target.value })}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </div>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            className="sm:col-span-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Примечания / проблемы"
-            rows={2}
-          />
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setModalOpen(false)}
-            className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {mutation.isPending ? 'Создаем...' : 'Создать'}
-          </button>
-        </div>
-      </Modal>
-    </div>
-  )
+	const formatForInput = (d: Date) => {
+		const pad = (n: number) => String(n).padStart(2, '0')
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+			d.getDate()
+		)}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+	}
+
+	const handleSlot = (slot: SlotInfo) => {
+		// Enter create mode and fully reset the form for a clean create experience
+		setEditingId(null)
+		const startDate =
+			slot.start instanceof Date ? slot.start : new Date(slot.start)
+		const endDate =
+			slot.end != null
+				? slot.end instanceof Date
+					? slot.end
+					: new Date(slot.end)
+				: null
+		setForm({
+			complaint: '',
+			description: '',
+			fullbay_service_id: '',
+			vehicle_id: '',
+			bay_id: '',
+			technician_ids: [],
+			company_id: '',
+			start: formatForInput(startDate),
+			end: endDate ? formatForInput(endDate) : '',
+			status: 'open',
+			notes: '',
+		})
+		setModalOpen(true)
+	}
+
+	return (
+		<div className='space-y-4'>
+			<div className='flex flex-wrap items-center justify-between gap-3'>
+				<div>
+					<h1 className='text-xl font-semibold text-slate-900'>
+						Booking calendar
+					</h1>
+					<p className='text-sm text-slate-600'>
+						Day / week / month / agenda with open slots
+					</p>
+				</div>
+				<div className='flex items-center gap-2'>
+					<button
+						type='button'
+						onClick={() => setFullscreen(true)}
+						className='rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+					>
+						<ArrowsPointingOutIcon className='mr-1 inline h-4 w-4' />
+						Full screen
+					</button>
+					<CreateButton
+						onClick={() => {
+							setEditingId(null)
+							setForm({
+								complaint: '',
+								description: '',
+								fullbay_service_id: '',
+								vehicle_id: '',
+								bay_id: '',
+								technician_ids: [],
+								company_id: '',
+								start: '',
+								end: '',
+								status: 'open',
+								notes: '',
+							})
+							setModalOpen(true)
+						}}
+					>
+						Creating Booking
+					</CreateButton>
+				</div>
+			</div>
+
+			<section className='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+				<div className='flex items-center justify-between'>
+					<div>
+						<h2 className='text-sm font-semibold text-slate-900'>
+							Events ({view})
+						</h2>
+						<p className='text-xs text-slate-500'>
+							Double click on event fills the form. Click a slot to create.
+						</p>
+					</div>
+					<div className='flex items-center gap-2'>
+						<div className='w-40'>
+							<CustomSelect
+								placeholder='All bays'
+								options={bayOptions}
+								value={
+									bayOptions.find(o => o.value === filterBay) ?? bayOptions[0]
+								}
+								onChange={opt => setFilterBay(opt.value)}
+							/>
+						</div>
+						<div className='w-52'>
+							<CustomSelect
+								placeholder='All technicians'
+								options={techOptions}
+								value={
+									techOptions.find(o => o.value === filterTech) ??
+									techOptions[0]
+								}
+								onChange={opt => setFilterTech(opt.value)}
+							/>
+						</div>
+						<div className='w-44'>
+							<CustomSelect
+								placeholder='All companies'
+								options={companyOptions}
+								value={
+									companyOptions.find(o => o.value === filterCompany) ??
+									companyOptions[0]
+								}
+								onChange={opt => setFilterCompany(opt.value)}
+							/>
+						</div>
+						<button
+							type='button'
+							onClick={() => {
+								setFilterBay('')
+								setFilterTech('')
+								setFilterCompany('')
+							}}
+							className='inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
+						>
+							<ArrowPathIcon className='h-4 w-4' />
+							Reset
+						</button>
+					</div>
+				</div>
+
+				{isLoading ? (
+					<p className='text-sm text-slate-600'>Loading...</p>
+				) : null}
+				{isError ? (
+					<p className='text-sm text-rose-600'>Failed to load</p>
+				) : null}
+				<div
+					className='mt-3 p-4'
+					style={{ height: 'calc(100vh - 220px)', boxSizing: 'border-box' }}
+				>
+					<DnDCalendar
+						localizer={localizer}
+						events={events}
+						date={date}
+						view={view}
+						popup
+						onView={(v: View) => setView(v as ViewMode)}
+						onNavigate={(d: Date) => setDate(d)}
+						defaultView={Views.MONTH}
+						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
+						scrollToTime={new Date(1970, 0, 1, 0, 0, 0)}
+						min={new Date(1970, 0, 1, 0, 0, 0)}
+						max={new Date(1970, 0, 1, 23, 59, 59)}
+						style={{ height: '100%' }}
+						onSelectEvent={(event: RBCEvent) => {
+							const booking = event.resource as Booking
+							setEditingId(booking.id)
+							setForm(prev => ({
+								...prev,
+								complaint: booking.complaint || '',
+								description: booking.description,
+								vehicle_id: booking.vehicle_id,
+								company_id: booking.company_id,
+								fullbay_service_id: booking.fullbay_service_id || '',
+								technician_ids: booking.technician_ids,
+								bay_id: booking.bay_id,
+								start: formatForInput(new Date(booking.start)),
+								end: booking.end ? formatForInput(new Date(booking.end)) : '',
+								status: booking.status,
+								notes: booking.notes,
+							}))
+							setModalOpen(true)
+						}}
+						selectable
+						onSelectSlot={handleSlot}
+						onEventDrop={async ({ event, start, end }) => {
+							const booking = event.resource as Booking
+							const startIso = (
+								start instanceof Date ? start : new Date(start)
+							).toISOString()
+							const endIso = end
+								? (end instanceof Date ? end : new Date(end)).toISOString()
+								: undefined
+							await api.put(`/api/bookings/${booking.id}`, {
+								...booking,
+								start: startIso,
+								end: endIso,
+							})
+							queryClient.invalidateQueries({ queryKey: ['agenda'] })
+							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+						}}
+						onEventResize={async ({ event, start, end }) => {
+							const booking = event.resource as Booking
+							const startIso = (
+								start instanceof Date ? start : new Date(start)
+							).toISOString()
+							const endIso = end
+								? (end instanceof Date ? end : new Date(end)).toISOString()
+								: undefined
+							await api.put(`/api/bookings/${booking.id}`, {
+								...booking,
+								start: startIso,
+								end: endIso,
+							})
+							queryClient.invalidateQueries({ queryKey: ['agenda'] })
+							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+						}}
+						// Open custom dropdown instead of drilling down when "+X more" is clicked
+						onShowMore={
+							((evts: RBCEvent[], _date: Date, cell?: HTMLElement) => {
+								const rect = cell?.getBoundingClientRect() ?? null
+								setMoreState({ open: true, events: evts, rect, date: _date })
+							}) as unknown as (events: RBCEvent[], date: Date) => void
+						}
+						// Hide the built-in overlay popup via a null component
+						components={mainCalendarComponents}
+					/>
+					<CalendarMenuDropdown
+						open={moreState.open}
+						rect={moreState.rect}
+						events={moreState.events}
+						onClose={() =>
+							setMoreState(s => ({ ...s, open: false, events: [] }))
+						}
+						onSelect={b => {
+							setMoreState(s => ({ ...s, open: false }))
+							setEditingId(b.id)
+							setForm(prev => ({
+								...prev,
+								complaint: b.complaint || '',
+								description: b.description,
+								vehicle_id: b.vehicle_id,
+								company_id: b.company_id,
+								fullbay_service_id: b.fullbay_service_id || '',
+								technician_ids: b.technician_ids,
+								bay_id: b.bay_id,
+								start: formatForInput(new Date(b.start)),
+								end: b.end ? formatForInput(new Date(b.end)) : '',
+								status: b.status,
+								notes: b.notes,
+							}))
+							setModalOpen(true)
+						}}
+					/>
+				</div>
+			</section>
+
+			<BookingQuickModal
+				isOpen={modalOpen}
+				isSaving={createMutation.isPending || updateMutation.isPending}
+				isEdit={Boolean(editingId)}
+				form={form}
+				units={(vehiclesQuery.data ?? []).map(v => ({
+					id: v.id,
+					label: v.plate || v.vin || `${v.make} ${v.model}`,
+				}))}
+				bays={(baysQuery.data ?? []).map(b => ({ id: b.id, label: b.name }))}
+				companies={(companiesQuery.data ?? []).map(c => ({
+					id: c.id,
+					label: c.name,
+				}))}
+				technicians={(techsQuery.data ?? []).map(t => ({
+					id: t.id,
+					label: t.name,
+				}))}
+				onChange={patch => setForm(prev => ({ ...prev, ...patch }))}
+				onCancel={() => {
+					setModalOpen(false)
+					setEditingId(null)
+				}}
+				onSubmit={() =>
+					editingId ? updateMutation.mutate(editingId) : createMutation.mutate()
+				}
+			/>
+
+			<FullWidthModal
+				isOpen={fullscreen}
+				onClose={() => setFullscreen(false)}
+				title={`Events (${view})`}
+			>
+				<div className='h-full p-4' style={{ boxSizing: 'border-box' }}>
+					<div className='mb-3 flex items-center gap-2'>
+						<div className='w-40'>
+							<CustomSelect
+								placeholder='All bays'
+								options={bayOptions}
+								value={
+									bayOptions.find(o => o.value === filterBay) ?? bayOptions[0]
+								}
+								onChange={opt => setFilterBay(opt.value)}
+							/>
+						</div>
+						<div className='w-52'>
+							<CustomSelect
+								placeholder='All technicians'
+								options={techOptions}
+								value={
+									techOptions.find(o => o.value === filterTech) ??
+									techOptions[0]
+								}
+								onChange={opt => setFilterTech(opt.value)}
+							/>
+						</div>
+						<div className='w-44'>
+							<CustomSelect
+								placeholder='All companies'
+								options={companyOptions}
+								value={
+									companyOptions.find(o => o.value === filterCompany) ??
+									companyOptions[0]
+								}
+								onChange={opt => setFilterCompany(opt.value)}
+							/>
+						</div>
+						<button
+							type='button'
+							onClick={() => {
+								setFilterBay('')
+								setFilterTech('')
+								setFilterCompany('')
+							}}
+							className='inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
+						>
+							<ArrowPathIcon className='h-4 w-4' />
+							Reset
+						</button>
+					</div>
+					<DnDCalendar
+						localizer={localizer}
+						events={events}
+						date={date}
+						view={view}
+						onView={(v: View) => setView(v as ViewMode)}
+						onNavigate={(d: Date) => setDate(d)}
+						defaultView={Views.MONTH}
+						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
+						scrollToTime={new Date(1970, 0, 1, 0, 0, 0)}
+						min={new Date(1970, 0, 1, 0, 0, 0)}
+						max={new Date(1970, 0, 1, 23, 59, 59)}
+						style={{ height: '100%' }}
+						components={fullscreenCalendarComponents}
+						onSelectEvent={(event: RBCEvent) => {
+							const booking = event.resource as Booking
+							setForm(prev => ({
+								...prev,
+								complaint: booking.complaint || '',
+								description: booking.description,
+								vehicle_id: booking.vehicle_id,
+								company_id: booking.company_id,
+								fullbay_service_id: booking.fullbay_service_id || '',
+								technician_ids: booking.technician_ids,
+								bay_id: booking.bay_id,
+								start: formatForInput(new Date(booking.start)),
+								end: booking.end ? formatForInput(new Date(booking.end)) : '',
+								status: booking.status,
+								notes: booking.notes,
+							}))
+							setModalOpen(true)
+						}}
+						selectable
+						onSelectSlot={handleSlot}
+						onEventDrop={async ({ event, start, end }) => {
+							const booking = event.resource as Booking
+							const startIso = (
+								start instanceof Date ? start : new Date(start)
+							).toISOString()
+							const endIso = end
+								? (end instanceof Date ? end : new Date(end)).toISOString()
+								: undefined
+							await api.put(`/api/bookings/${booking.id}`, {
+								...booking,
+								start: startIso,
+								end: endIso,
+							})
+							queryClient.invalidateQueries({ queryKey: ['agenda'] })
+							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+						}}
+						onEventResize={async ({ event, start, end }) => {
+							const booking = event.resource as Booking
+							const startIso = (
+								start instanceof Date ? start : new Date(start)
+							).toISOString()
+							const endIso = end
+								? (end instanceof Date ? end : new Date(end)).toISOString()
+								: undefined
+							await api.put(`/api/bookings/${booking.id}`, {
+								...booking,
+								start: startIso,
+								end: endIso,
+							})
+							queryClient.invalidateQueries({ queryKey: ['agenda'] })
+							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+						}}
+					/>
+				</div>
+			</FullWidthModal>
+		</div>
+	)
 }
 
 export default CalendarPage
-

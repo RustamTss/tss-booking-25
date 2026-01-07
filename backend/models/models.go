@@ -9,10 +9,8 @@ import (
 type UserRole string
 
 const (
-	RoleAdmin      UserRole = "admin"
-	RoleDispatcher UserRole = "dispatcher"
-	RoleMechanic   UserRole = "mechanic"
-	RoleClient     UserRole = "client"
+	RoleAdmin  UserRole = "admin"
+	RoleOffice UserRole = "office"
 )
 
 type BookingStatus string
@@ -43,6 +41,17 @@ type Company struct {
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
+// Contact belongs to a company and stores contact person details
+type Contact struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	CompanyID primitive.ObjectID `bson:"company_id" json:"company_id"`
+	Name      string             `bson:"name" json:"name"`
+	Phone     string             `bson:"phone" json:"phone"`
+	Email     string             `bson:"email,omitempty" json:"email,omitempty"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+}
+
 type VehicleType string
 
 const (
@@ -56,21 +65,12 @@ type Vehicle struct {
 	Type      VehicleType        `bson:"type" json:"type"`
 	VIN       string             `bson:"vin" json:"vin"`
 	Plate     string             `bson:"plate" json:"plate"`
+	Nickname  string             `bson:"nickname,omitempty" json:"nickname,omitempty"`
 	Make      string             `bson:"make" json:"make"`
 	Model     string             `bson:"model" json:"model"`
 	Year      int                `bson:"year" json:"year"`
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
-}
-
-type Service struct {
-	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name            string             `bson:"name" json:"name"`
-	Description     string             `bson:"description" json:"description"`
-	DurationMinutes int                `bson:"duration_minutes" json:"duration_minutes"`
-	PriceCents      int64              `bson:"price_cents" json:"price_cents"`
-	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt       time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type Technician struct {
@@ -85,45 +85,48 @@ type Technician struct {
 
 type Bay struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Key       string             `bson:"key" json:"key"`
 	Name      string             `bson:"name" json:"name"`
-	Capacity  int                `bson:"capacity" json:"capacity"`
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type Booking struct {
-	ID            primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
-	Title         string               `bson:"title" json:"title"`
-	Description   string               `bson:"description" json:"description"`
-	VehicleID     primitive.ObjectID   `bson:"vehicle_id" json:"vehicle_id"`
-	ServiceIDs    []primitive.ObjectID `bson:"service_ids" json:"service_ids"`
-	BayID         primitive.ObjectID   `bson:"bay_id" json:"bay_id"`
-	TechnicianIDs []primitive.ObjectID `bson:"technician_ids" json:"technician_ids"`
-	CompanyID     primitive.ObjectID   `bson:"company_id" json:"company_id"`
-	Start         time.Time            `bson:"start" json:"start"`
-	End           *time.Time           `bson:"end,omitempty" json:"end,omitempty"`
-	Status        BookingStatus        `bson:"status" json:"status"`
-	Notes         string               `bson:"notes" json:"notes"`
-	CreatedBy     primitive.ObjectID   `bson:"created_by" json:"created_by"`
-	CreatedAt     time.Time            `bson:"created_at" json:"created_at"`
-	UpdatedAt     time.Time            `bson:"updated_at" json:"updated_at"`
+	ID               primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
+	Number           string               `bson:"number" json:"number"`
+	Title            string               `bson:"title,omitempty" json:"title,omitempty"`
+	Complaint        string               `bson:"complaint,omitempty" json:"complaint,omitempty"`
+	Description      string               `bson:"description" json:"description"`
+	VehicleID        primitive.ObjectID   `bson:"vehicle_id" json:"vehicle_id"`
+	FullbayServiceID string               `bson:"fullbay_service_id,omitempty" json:"fullbay_service_id,omitempty"`
+	BayID            primitive.ObjectID   `bson:"bay_id" json:"bay_id"`
+	TechnicianIDs    []primitive.ObjectID `bson:"technician_ids" json:"technician_ids"`
+	CompanyID        primitive.ObjectID   `bson:"company_id" json:"company_id"`
+	Start            time.Time            `bson:"start" json:"start"`
+	End              *time.Time           `bson:"end,omitempty" json:"end,omitempty"`
+	Status           BookingStatus        `bson:"status" json:"status"`
+	Notes            string               `bson:"notes" json:"notes"`
+	CreatedBy        primitive.ObjectID   `bson:"created_by" json:"created_by"`
+	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
+	UpdatedAt        time.Time            `bson:"updated_at" json:"updated_at"`
 }
 
 type AuditLog struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Action    string             `bson:"action" json:"action"`
-	Entity    string             `bson:"entity" json:"entity"`
-	EntityID  primitive.ObjectID `bson:"entity_id" json:"entity_id"`
-	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
-	Meta      interface{}        `bson:"meta" json:"meta"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	ID        primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	Action    string                 `bson:"action" json:"action"`
+	Entity    string                 `bson:"entity" json:"entity"`
+	EntityID  primitive.ObjectID     `bson:"entity_id" json:"entity_id"`
+	UserID    primitive.ObjectID     `bson:"user_id" json:"user_id"`
+	Meta      map[string]interface{} `bson:"meta" json:"meta"`
+	CreatedAt time.Time              `bson:"created_at" json:"created_at"`
 }
 
 type Settings struct {
-	ID            string    `bson:"_id,omitempty" json:"id"`
-	TelegramToken string    `bson:"telegram_token" json:"telegram_token"`
-	TelegramChat  string    `bson:"telegram_chat" json:"telegram_chat"`
-	UpdatedAt     time.Time `bson:"updated_at" json:"updated_at"`
+	ID               string    `bson:"_id,omitempty" json:"id"`
+	TelegramToken    string    `bson:"telegram_token" json:"telegram_token"`
+	TelegramChat     string    `bson:"telegram_chat" json:"telegram_chat"`
+	TelegramTemplate string    `bson:"telegram_template" json:"telegram_template"`
+	UpdatedAt        time.Time `bson:"updated_at" json:"updated_at"`
 }
 
 type RealtimeEvent struct {

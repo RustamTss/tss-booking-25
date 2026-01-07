@@ -33,11 +33,9 @@ func overlaps(newStart time.Time, newEnd *time.Time, otherStart time.Time, other
 	return true
 }
 
-// ValidateBookingConflict проверяет пересечения по бэю с учетом capacity.
-func ValidateBookingConflict(newBooking models.Booking, existing []models.Booking, bayCapacity int) error {
-	if bayCapacity <= 0 {
-		bayCapacity = 1
-	}
+// ValidateBookingConflict checks time overlaps for the same bay.
+// Capacity is no longer used; any overlap is considered a conflict.
+func ValidateBookingConflict(newBooking models.Booking, existing []models.Booking, _ int) error {
 	conflicts := 0
 	for _, b := range existing {
 		if b.Status == models.BookingCanceled || b.Status == models.BookingClosed {
@@ -45,7 +43,7 @@ func ValidateBookingConflict(newBooking models.Booking, existing []models.Bookin
 		}
 		if b.BayID == newBooking.BayID && overlaps(newBooking.Start, newBooking.End, b.Start, b.End) {
 			conflicts++
-			if conflicts >= bayCapacity {
+			if conflicts >= 1 {
 				return ErrBayBusy
 			}
 		}

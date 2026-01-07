@@ -11,22 +11,23 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const bookingCollection = "bookings"
 
 type bookingRequest struct {
-	Title         string               `json:"title"`
-	Description   string               `json:"description"`
-	VehicleID     string               `json:"vehicle_id"`
-	ServiceIDs    []string             `json:"service_ids"`
-	BayID         string               `json:"bay_id"`
-	TechnicianIDs []string             `json:"technician_ids"`
-	CompanyID     string               `json:"company_id"`
-	Start         time.Time            `json:"start"`
-	End           *time.Time           `json:"end"`
-	Status        models.BookingStatus `json:"status"`
-	Notes         string               `json:"notes"`
+	Complaint        string               `json:"complaint"`
+	Description      string               `json:"description"`
+	VehicleID        string               `json:"vehicle_id"`
+	FullbayServiceID string               `json:"fullbay_service_id"`
+	BayID            string               `json:"bay_id"`
+	TechnicianIDs    []string             `json:"technician_ids"`
+	CompanyID        string               `json:"company_id"`
+	Start            time.Time            `json:"start"`
+	End              *time.Time           `json:"end"`
+	Status           models.BookingStatus `json:"status"`
+	Notes            string               `json:"notes"`
 }
 
 func parseObjectIDs(values []string) ([]primitive.ObjectID, error) {
@@ -42,7 +43,11 @@ func parseObjectIDs(values []string) ([]primitive.ObjectID, error) {
 }
 
 func (h *Handler) ListBookings(c *fiber.Ctx) error {
-	cur, err := h.DB.Collection(bookingCollection).Find(h.ctx(c), bson.D{})
+	cur, err := h.DB.Collection(bookingCollection).Find(
+		h.ctx(c),
+		bson.D{},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}),
+	)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -53,6 +58,21 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 		return fiber.ErrInternalServerError
 	}
 	return c.JSON(items)
+}
+
+func (h *Handler) GetBooking(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	var b models.Booking
+	if err := h.DB.Collection(bookingCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&b); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(b)
 }
 
 func (h *Handler) CreateBooking(c *fiber.Ctx) error {
@@ -69,20 +89,13 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid bay_id")
 	}
-	bay, err := h.loadBay(c, bayID)
-	if err != nil {
-		return err
-	}
+	// capacity removed; no need to load bay here
 	var companyID primitive.ObjectID
 	if req.CompanyID != "" {
 		companyID, err = asObjectID(req.CompanyID)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid company_id")
 		}
-	}
-	serviceIDs, err := parseObjectIDs(req.ServiceIDs)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid service_ids")
 	}
 	technicianIDs, err := parseObjectIDs(req.TechnicianIDs)
 	if err != nil {
@@ -96,21 +109,42 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 
 	now := h.now()
 	booking := models.Booking{
-		ID:            primitive.NewObjectID(),
-		Title:         req.Title,
-		Description:   req.Description,
-		VehicleID:     vehicleID,
-		ServiceIDs:    serviceIDs,
-		BayID:         bayID,
-		TechnicianIDs: technicianIDs,
-		CompanyID:     companyID,
-		Start:         req.Start.In(h.TZ),
-		End:           req.End,
-		Status:        status,
-		Notes:         req.Notes,
-		CreatedBy:     primitive.NilObjectID,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:               primitive.NewObjectID(),
+		Number:           "",
+		Title:            "",
+		Complaint:        req.Complaint,
+		Description:      req.Description,
+		VehicleID:        vehicleID,
+		FullbayServiceID: req.FullbayServiceID,
+		BayID:            bayID,
+		TechnicianIDs:    technicianIDs,
+		CompanyID:        companyID,
+		Start:            req.Start.In(h.TZ),
+		End:              req.End,
+		Status:           status,
+		Notes:            req.Notes,
+		CreatedBy:        primitive.NilObjectID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	// Generate sequential booking number 000001, 000002, ...
+	{
+		var seqDoc struct {
+			Seq int64 `bson:"seq"`
+		}
+		err := h.DB.Collection("counters").
+			FindOneAndUpdate(
+				h.ctx(c),
+				bson.M{"_id": "booking_number"},
+				bson.M{"$inc": bson.M{"seq": 1}},
+				options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
+			).Decode(&seqDoc)
+		if err == nil && seqDoc.Seq > 0 {
+			booking.Number = fmt.Sprintf("%06d", seqDoc.Seq)
+		} else {
+			// fallback to timestamp if counter fails
+			booking.Number = fmt.Sprintf("%06d", time.Now().Unix()%1000000)
+		}
 	}
 	if uid := getUserID(c); uid != "" {
 		if userID, err := primitive.ObjectIDFromHex(uid); err == nil {
@@ -122,16 +156,77 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
-	if err := services.ValidateBookingConflict(booking, existing, bay.Capacity); err != nil {
+	if err := services.ValidateBookingConflict(booking, existing, 1); err != nil {
 		return fiber.NewError(fiber.StatusConflict, err.Error())
 	}
 
 	if _, err := h.DB.Collection(bookingCollection).InsertOne(h.ctx(c), booking); err != nil {
 		return fiber.ErrInternalServerError
 	}
+	// audit: booking.created
+	{
+		var actor primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if id, err := primitive.ObjectIDFromHex(uid); err == nil {
+				actor = id
+			}
+		}
+		meta := bson.M{
+			"number":     booking.Number,
+			"vehicle_id": booking.VehicleID.Hex(),
+			"bay_id":     booking.BayID.Hex(),
+			"company_id": booking.CompanyID.Hex(),
+			"start":      booking.Start,
+			"end":        booking.End,
+			"status":     booking.Status,
+		}
+		_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+			ID:        primitive.NewObjectID(),
+			Action:    "booking.created",
+			Entity:    "booking",
+			EntityID:  booking.ID,
+			UserID:    actor,
+			Meta:      meta,
+			CreatedAt: h.now(),
+		})
+	}
+	// audit: technician booking assignment on create
+	if len(booking.TechnicianIDs) > 0 {
+		var userID primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if id, err := primitive.ObjectIDFromHex(uid); err == nil {
+				userID = id
+			}
+		}
+		for _, techID := range booking.TechnicianIDs {
+			_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+				ID:        primitive.NewObjectID(),
+				Action:    "booking.assigned",
+				Entity:    "technician",
+				EntityID:  techID,
+				UserID:    userID,
+				Meta:      bson.M{"booking_id": booking.ID, "number": booking.Number},
+				CreatedAt: h.now(),
+			})
+		}
+	}
 
 	pushRealtime(models.RealtimeEvent{Type: "booking.created", Data: booking})
-	_ = h.Telegram.Notify(fmt.Sprintf("Новое бронирование: %s (бей %s) с %s", booking.Title, booking.BayID.Hex(), booking.Start.Format(time.RFC3339)))
+	// Try templated notification
+	var settings models.Settings
+	_ = h.DB.Collection(settingsCollection).FindOne(h.ctx(c), bson.M{"_id": "global"}).Decode(&settings)
+	if settings.TelegramTemplate != "" {
+		data := h.buildTelegramData(c, booking)
+		msg := services.Render(settings.TelegramTemplate, data)
+		if strings.TrimSpace(msg) == "" {
+			// Fallback rich message
+			msg = h.renderTelegramFallback("created", booking, data)
+		}
+		_ = h.Telegram.Notify(msg)
+	} else {
+		data := h.buildTelegramData(c, booking)
+		_ = h.Telegram.Notify(h.renderTelegramFallback("created", booking, data))
+	}
 	return c.Status(fiber.StatusCreated).JSON(booking)
 }
 
@@ -153,20 +248,13 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid bay_id")
 	}
-	bay, err := h.loadBay(c, bayID)
-	if err != nil {
-		return err
-	}
+	// capacity removed; no need to load bay here
 	var companyID primitive.ObjectID
 	if req.CompanyID != "" {
 		companyID, err = asObjectID(req.CompanyID)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid company_id")
 		}
-	}
-	serviceIDs, err := parseObjectIDs(req.ServiceIDs)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid service_ids")
 	}
 	technicianIDs, err := parseObjectIDs(req.TechnicianIDs)
 	if err != nil {
@@ -182,10 +270,11 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 	}
 
 	updatedBooking := existingBooking
-	updatedBooking.Title = req.Title
+	updatedBooking.Title = ""
+	updatedBooking.Complaint = req.Complaint
 	updatedBooking.Description = req.Description
 	updatedBooking.VehicleID = vehicleID
-	updatedBooking.ServiceIDs = serviceIDs
+	updatedBooking.FullbayServiceID = req.FullbayServiceID
 	updatedBooking.BayID = bayID
 	updatedBooking.TechnicianIDs = technicianIDs
 	updatedBooking.CompanyID = companyID
@@ -207,31 +296,115 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 			filtered = append(filtered, b)
 		}
 	}
-	if err := services.ValidateBookingConflict(updatedBooking, filtered, bay.Capacity); err != nil {
+	if err := services.ValidateBookingConflict(updatedBooking, filtered, 1); err != nil {
 		return fiber.NewError(fiber.StatusConflict, err.Error())
 	}
 
 	update := bson.M{
 		"$set": bson.M{
-			"title":          updatedBooking.Title,
-			"description":    updatedBooking.Description,
-			"vehicle_id":     updatedBooking.VehicleID,
-			"service_ids":    updatedBooking.ServiceIDs,
-			"bay_id":         updatedBooking.BayID,
-			"technician_ids": updatedBooking.TechnicianIDs,
-			"company_id":     updatedBooking.CompanyID,
-			"start":          updatedBooking.Start,
-			"end":            updatedBooking.End,
-			"status":         updatedBooking.Status,
-			"notes":          updatedBooking.Notes,
-			"updated_at":     updatedBooking.UpdatedAt,
+			"title":              updatedBooking.Title,
+			"complaint":          updatedBooking.Complaint,
+			"description":        updatedBooking.Description,
+			"vehicle_id":         updatedBooking.VehicleID,
+			"fullbay_service_id": updatedBooking.FullbayServiceID,
+			"bay_id":             updatedBooking.BayID,
+			"technician_ids":     updatedBooking.TechnicianIDs,
+			"company_id":         updatedBooking.CompanyID,
+			"start":              updatedBooking.Start,
+			"end":                updatedBooking.End,
+			"status":             updatedBooking.Status,
+			"notes":              updatedBooking.Notes,
+			"updated_at":         updatedBooking.UpdatedAt,
 		},
 	}
 	if _, err := h.DB.Collection(bookingCollection).UpdateByID(h.ctx(c), id, update); err != nil {
 		return fiber.ErrInternalServerError
 	}
+	// audit: capture changes and new technician assignments on update
+	{
+		oldSet := map[primitive.ObjectID]bool{}
+		for _, t := range existingBooking.TechnicianIDs {
+			oldSet[t] = true
+		}
+		var userID primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if u, err := primitive.ObjectIDFromHex(uid); err == nil {
+				userID = u
+			}
+		}
+		// general diffs
+		changes := bson.M{}
+		if existingBooking.VehicleID != updatedBooking.VehicleID {
+			changes["vehicle_id"] = bson.M{"from": existingBooking.VehicleID.Hex(), "to": updatedBooking.VehicleID.Hex()}
+		}
+		if existingBooking.BayID != updatedBooking.BayID {
+			changes["bay_id"] = bson.M{"from": existingBooking.BayID.Hex(), "to": updatedBooking.BayID.Hex()}
+		}
+		if existingBooking.CompanyID != updatedBooking.CompanyID {
+			changes["company_id"] = bson.M{"from": existingBooking.CompanyID.Hex(), "to": updatedBooking.CompanyID.Hex()}
+		}
+		if !existingBooking.Start.Equal(updatedBooking.Start) {
+			changes["start"] = bson.M{"from": existingBooking.Start, "to": updatedBooking.Start}
+		}
+		if (existingBooking.End == nil) != (updatedBooking.End == nil) ||
+			(existingBooking.End != nil && updatedBooking.End != nil && !existingBooking.End.Equal(*updatedBooking.End)) {
+			changes["end"] = bson.M{"from": existingBooking.End, "to": updatedBooking.End}
+		}
+		if existingBooking.Status != updatedBooking.Status {
+			changes["status"] = bson.M{"from": existingBooking.Status, "to": updatedBooking.Status}
+		}
+		if existingBooking.Complaint != updatedBooking.Complaint {
+			changes["complaint"] = bson.M{"from": existingBooking.Complaint, "to": updatedBooking.Complaint}
+		}
+		if existingBooking.Description != updatedBooking.Description {
+			changes["description"] = bson.M{"from": existingBooking.Description, "to": updatedBooking.Description}
+		}
+		// technicians diff
+		newSet := map[primitive.ObjectID]bool{}
+		for _, t := range updatedBooking.TechnicianIDs {
+			newSet[t] = true
+		}
+		var added, removed []string
+		for _, t := range updatedBooking.TechnicianIDs {
+			if !oldSet[t] {
+				added = append(added, t.Hex())
+			}
+		}
+		for t := range oldSet {
+			if !newSet[t] {
+				removed = append(removed, t.Hex())
+			}
+		}
+		if len(added) > 0 {
+			changes["technicians_added"] = added
+		}
+		if len(removed) > 0 {
+			changes["technicians_removed"] = removed
+		}
+		if len(changes) > 0 {
+			_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+				ID:        primitive.NewObjectID(),
+				Action:    "booking.updated",
+				Entity:    "booking",
+				EntityID:  id,
+				UserID:    userID,
+				Meta:      changes,
+				CreatedAt: h.now(),
+			})
+		}
+	}
 
 	pushRealtime(models.RealtimeEvent{Type: "booking.updated", Data: updatedBooking})
+	// Notify via template if present
+	{
+		var settings models.Settings
+		_ = h.DB.Collection(settingsCollection).FindOne(h.ctx(c), bson.M{"_id": "global"}).Decode(&settings)
+		if settings.TelegramTemplate != "" {
+			data := h.buildTelegramData(c, updatedBooking)
+			msg := services.Render(settings.TelegramTemplate, data)
+			_ = h.Telegram.Notify(msg)
+		}
+	}
 	return c.JSON(updatedBooking)
 }
 
@@ -239,6 +412,14 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	id, err := asObjectID(c.Params("id"))
 	if err != nil {
 		return fiber.ErrBadRequest
+	}
+	// load booking for telegram details
+	var b models.Booking
+	if err := h.DB.Collection(bookingCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&b); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
 	}
 	now := h.now()
 	update := bson.M{"$set": bson.M{"status": models.BookingCanceled, "end": &now, "updated_at": now}}
@@ -250,7 +431,28 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 		return fiber.ErrNotFound
 	}
 	pushRealtime(models.RealtimeEvent{Type: "booking.canceled", Data: id.Hex()})
-	_ = h.Telegram.Notify(fmt.Sprintf("Бронирование отменено: %s", id.Hex()))
+	b.Status = models.BookingCanceled
+	b.End = &now
+	data := h.buildTelegramData(c, b)
+	_ = h.Telegram.Notify(h.renderTelegramFallback("canceled", b, data))
+	// audit
+	{
+		var actor primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if id2, err := primitive.ObjectIDFromHex(uid); err == nil {
+				actor = id2
+			}
+		}
+		_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+			ID:        primitive.NewObjectID(),
+			Action:    "booking.canceled",
+			Entity:    "booking",
+			EntityID:  id,
+			UserID:    actor,
+			Meta:      bson.M{},
+			CreatedAt: h.now(),
+		})
+	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -258,6 +460,14 @@ func (h *Handler) CloseBooking(c *fiber.Ctx) error {
 	id, err := asObjectID(c.Params("id"))
 	if err != nil {
 		return fiber.ErrBadRequest
+	}
+	// load booking for telegram details
+	var b models.Booking
+	if err := h.DB.Collection(bookingCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&b); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
 	}
 	now := h.now()
 	update := bson.M{"$set": bson.M{"status": models.BookingClosed, "end": &now, "updated_at": now}}
@@ -269,8 +479,211 @@ func (h *Handler) CloseBooking(c *fiber.Ctx) error {
 		return fiber.ErrNotFound
 	}
 	pushRealtime(models.RealtimeEvent{Type: "booking.closed", Data: id.Hex()})
-	_ = h.Telegram.Notify(fmt.Sprintf("Бронирование закрыто: %s", id.Hex()))
+	b.Status = models.BookingClosed
+	b.End = &now
+	data := h.buildTelegramData(c, b)
+	_ = h.Telegram.Notify(h.renderTelegramFallback("closed", b, data))
+	// audit
+	{
+		var actor primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if id2, err := primitive.ObjectIDFromHex(uid); err == nil {
+				actor = id2
+			}
+		}
+		_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+			ID:        primitive.NewObjectID(),
+			Action:    "booking.closed",
+			Entity:    "booking",
+			EntityID:  id,
+			UserID:    actor,
+			Meta:      bson.M{},
+			CreatedAt: h.now(),
+		})
+	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h *Handler) DeleteBooking(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	res, err := h.DB.Collection(bookingCollection).DeleteOne(h.ctx(c), bson.M{"_id": id})
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if res.DeletedCount == 0 {
+		return fiber.ErrNotFound
+	}
+	pushRealtime(models.RealtimeEvent{Type: "booking.deleted", Data: id.Hex()})
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// ListBookingLogs returns audit logs for a booking
+func (h *Handler) ListBookingLogs(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cur, err := h.DB.Collection(auditCollection).Find(h.ctx(c), bson.M{
+		"entity":    "booking",
+		"entity_id": id,
+	}, opts)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	defer cur.Close(h.ctx(c))
+	var logs []models.AuditLog
+	if err := cur.All(h.ctx(c), &logs); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(logs)
+}
+
+// buildTelegramData collects placeholder values for template rendering.
+func (h *Handler) buildTelegramData(c *fiber.Ctx, b models.Booking) map[string]string {
+	data := map[string]string{
+		// booking_id maps to the public number for template convenience
+		"booking_id": func() string {
+			if b.Number != "" {
+				return b.Number
+			}
+			return b.ID.Hex()
+		}(),
+		"number":      b.Number,
+		"title":       b.Title,
+		"complaint":   b.Complaint,
+		"description": b.Description,
+		"status":      string(b.Status),
+		// default placeholders formatted for human reading (match UI DateTime picker)
+		"start": "",
+		"end":   "",
+	}
+	// Provide both human-friendly and ISO formats
+	const pretty = "01/02/2006, 03:04 PM"
+	data["start"] = b.Start.In(h.TZ).Format(pretty)
+	data["start_pretty"] = data["start"]
+	data["start_iso"] = b.Start.In(h.TZ).Format(time.RFC3339)
+	if b.End != nil {
+		data["end"] = b.End.In(h.TZ).Format(pretty)
+		data["end_pretty"] = data["end"]
+		data["end_iso"] = b.End.In(h.TZ).Format(time.RFC3339)
+	} else {
+		data["end_iso"] = ""
+	}
+	// Vehicle / unit
+	var vehicle models.Vehicle
+	if err := h.DB.Collection(vehicleCollection).FindOne(h.ctx(c), bson.M{"_id": b.VehicleID}).Decode(&vehicle); err == nil {
+		data["vehicle_plate"] = vehicle.Plate
+		data["vehicle_vin"] = vehicle.VIN
+		data["vehicle_make"] = vehicle.Make
+		data["vehicle_model"] = vehicle.Model
+		data["unit_plate"] = vehicle.Plate
+		data["unit_vin"] = vehicle.VIN
+		data["unit_make"] = vehicle.Make
+		data["unit_model"] = vehicle.Model
+		unit := vehicle.Plate
+		if unit == "" {
+			unit = vehicle.VIN
+		}
+		data["unit"] = unit
+	}
+	// Bay
+	var bay models.Bay
+	if err := h.DB.Collection(bayCollection).FindOne(h.ctx(c), bson.M{"_id": b.BayID}).Decode(&bay); err == nil {
+		data["bay_name"] = bay.Name
+	}
+	// Company
+	var company models.Company
+	if err := h.DB.Collection(companyCollection).FindOne(h.ctx(c), bson.M{"_id": b.CompanyID}).Decode(&company); err == nil {
+		data["company_name"] = company.Name
+	}
+	// Fullbay service id
+	if b.FullbayServiceID != "" {
+		data["fullbay_service_id"] = b.FullbayServiceID
+	}
+	// Technicians
+	if len(b.TechnicianIDs) > 0 {
+		cur, _ := h.DB.Collection(technicianCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": b.TechnicianIDs}})
+		defer cur.Close(h.ctx(c))
+		var names []string
+		for cur.Next(h.ctx(c)) {
+			var t models.Technician
+			if err := cur.Decode(&t); err == nil {
+				names = append(names, t.Name)
+			}
+		}
+		data["technician_names"] = strings.Join(names, ", ")
+	}
+	return data
+}
+
+func (h *Handler) renderTelegramFallback(kind string, b models.Booking, data map[string]string) string {
+	icon := "ℹ️"
+	title := "Booking"
+	switch kind {
+	case "created":
+		icon = "🆕"
+		title = "New booking"
+	case "updated":
+		icon = "✏️"
+		title = "Booking updated"
+	case "canceled":
+		icon = "🚫"
+		title = "Booking canceled"
+	case "closed":
+		icon = "✅"
+		title = "Booking closed"
+	}
+	const pretty = "01/02/2006, 03:04 PM"
+	start := b.Start.In(h.TZ).Format(pretty)
+	end := ""
+	if b.End != nil {
+		end = b.End.In(h.TZ).Format(pretty)
+	}
+	unit := data["unit"]
+	if unit == "" {
+		unit = data["vehicle_plate"]
+		if unit == "" {
+			unit = data["vehicle_vin"]
+		}
+	}
+	company := data["company_name"]
+	bay := data["bay_name"]
+	service := data["fullbay_service_id"]
+	techs := data["technician_names"]
+	number := b.Number
+	if number == "" {
+		number = b.ID.Hex()
+	}
+	msg := fmt.Sprintf("%s <b>%s</b>\n<b>#%s</b>\n", icon, title, number)
+	if unit != "" {
+		msg += fmt.Sprintf("Unit: <b>%s</b>\n", unit)
+	}
+	if company != "" {
+		msg += fmt.Sprintf("Company: %s\n", company)
+	}
+	if bay != "" {
+		msg += fmt.Sprintf("Bay: %s\n", bay)
+	}
+	if service != "" {
+		msg += fmt.Sprintf("Service: %s\n", service)
+	}
+	if techs != "" {
+		msg += fmt.Sprintf("Technicians: %s\n", techs)
+	}
+	if end != "" {
+		msg += fmt.Sprintf("Time: %s — %s\n", start, end)
+	} else {
+		msg += fmt.Sprintf("Start: %s\n", start)
+	}
+	desc := data["description"]
+	if desc != "" {
+		msg += fmt.Sprintf("Notes: %s", desc)
+	}
+	return msg
 }
 
 func (h *Handler) findConflictingBookings(c *fiber.Ctx, bayID primitive.ObjectID) ([]models.Booking, error) {
@@ -306,11 +719,141 @@ func (h *Handler) DashboardSummary(c *fiber.Ctx) error {
 
 	baysCount, _ := h.DB.Collection(bayCollection).CountDocuments(h.ctx(c), bson.D{})
 
+	// Top aggregates (all-time)
+	type kv struct {
+		ID    primitive.ObjectID `bson:"_id"`
+		Count int                `bson:"count"`
+	}
+	// Top technicians
+	var topTechAgg []kv
+	if cur, err := h.DB.Collection(bookingCollection).Aggregate(h.ctx(c), mongo.Pipeline{
+		{{Key: "$unwind", Value: "$technician_ids"}},
+		{{Key: "$group", Value: bson.M{"_id": "$technician_ids", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$sort", Value: bson.M{"count": -1}}},
+		{{Key: "$limit", Value: 5}},
+	}); err == nil {
+		defer cur.Close(h.ctx(c))
+		_ = cur.All(h.ctx(c), &topTechAgg)
+	}
+	techIDs := make([]primitive.ObjectID, 0, len(topTechAgg))
+	for _, t := range topTechAgg {
+		techIDs = append(techIDs, t.ID)
+	}
+	techNames := map[primitive.ObjectID]string{}
+	if len(techIDs) > 0 {
+		cur, _ := h.DB.Collection(technicianCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": techIDs}})
+		for cur.Next(h.ctx(c)) {
+			var t models.Technician
+			if err := cur.Decode(&t); err == nil {
+				techNames[t.ID] = t.Name
+			}
+		}
+	}
+	topTechnicians := make([]fiber.Map, 0, len(topTechAgg))
+	for _, t := range topTechAgg {
+		topTechnicians = append(topTechnicians, fiber.Map{"id": t.ID.Hex(), "name": techNames[t.ID], "count": t.Count})
+	}
+	// Top units
+	var topUnitsAgg []kv
+	if cur, err := h.DB.Collection(bookingCollection).Aggregate(h.ctx(c), mongo.Pipeline{
+		{{Key: "$group", Value: bson.M{"_id": "$vehicle_id", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$sort", Value: bson.M{"count": -1}}},
+		{{Key: "$limit", Value: 5}},
+	}); err == nil {
+		defer cur.Close(h.ctx(c))
+		_ = cur.All(h.ctx(c), &topUnitsAgg)
+	}
+	unitIDs := make([]primitive.ObjectID, 0, len(topUnitsAgg))
+	for _, u := range topUnitsAgg {
+		unitIDs = append(unitIDs, u.ID)
+	}
+	unitLabels := map[primitive.ObjectID]string{}
+	if len(unitIDs) > 0 {
+		cur, _ := h.DB.Collection(vehicleCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": unitIDs}})
+		for cur.Next(h.ctx(c)) {
+			var v models.Vehicle
+			if err := cur.Decode(&v); err == nil {
+				label := v.Plate
+				if label == "" {
+					label = v.VIN
+				}
+				unitLabels[v.ID] = label
+			}
+		}
+	}
+	topUnits := make([]fiber.Map, 0, len(topUnitsAgg))
+	for _, u := range topUnitsAgg {
+		topUnits = append(topUnits, fiber.Map{"id": u.ID.Hex(), "name": unitLabels[u.ID], "count": u.Count})
+	}
+	// Top companies
+	var topCompaniesAgg []kv
+	if cur, err := h.DB.Collection(bookingCollection).Aggregate(h.ctx(c), mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"company_id": bson.M{"$ne": primitive.NilObjectID}}}},
+		{{Key: "$group", Value: bson.M{"_id": "$company_id", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$sort", Value: bson.M{"count": -1}}},
+		{{Key: "$limit", Value: 5}},
+	}); err == nil {
+		defer cur.Close(h.ctx(c))
+		_ = cur.All(h.ctx(c), &topCompaniesAgg)
+	}
+	companyIDs := make([]primitive.ObjectID, 0, len(topCompaniesAgg))
+	for _, u := range topCompaniesAgg {
+		companyIDs = append(companyIDs, u.ID)
+	}
+	companyNames := map[primitive.ObjectID]string{}
+	if len(companyIDs) > 0 {
+		cur, _ := h.DB.Collection(companyCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": companyIDs}})
+		for cur.Next(h.ctx(c)) {
+			var v models.Company
+			if err := cur.Decode(&v); err == nil {
+				companyNames[v.ID] = v.Name
+			}
+		}
+	}
+	topCompanies := make([]fiber.Map, 0, len(topCompaniesAgg))
+	for _, u := range topCompaniesAgg {
+		topCompanies = append(topCompanies, fiber.Map{"id": u.ID.Hex(), "name": companyNames[u.ID], "count": u.Count})
+	}
+	// Top bays
+	var topBaysAgg []kv
+	if cur, err := h.DB.Collection(bookingCollection).Aggregate(h.ctx(c), mongo.Pipeline{
+		{{Key: "$group", Value: bson.M{"_id": "$bay_id", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$sort", Value: bson.M{"count": -1}}},
+		{{Key: "$limit", Value: 5}},
+	}); err == nil {
+		defer cur.Close(h.ctx(c))
+		_ = cur.All(h.ctx(c), &topBaysAgg)
+	}
+	bayIDs := make([]primitive.ObjectID, 0, len(topBaysAgg))
+	for _, b := range topBaysAgg {
+		bayIDs = append(bayIDs, b.ID)
+	}
+	bayNames := map[primitive.ObjectID]string{}
+	if len(bayIDs) > 0 {
+		cur, _ := h.DB.Collection(bayCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": bayIDs}})
+		for cur.Next(h.ctx(c)) {
+			var v models.Bay
+			if err := cur.Decode(&v); err == nil {
+				bayNames[v.ID] = v.Name
+			}
+		}
+	}
+	topBays := make([]fiber.Map, 0, len(topBaysAgg))
+	for _, b := range topBaysAgg {
+		topBays = append(topBays, fiber.Map{"id": b.ID.Hex(), "name": bayNames[b.ID], "count": b.Count})
+	}
+
 	return c.JSON(fiber.Map{
 		"open_bookings":  openCount,
 		"today_bookings": todayCount,
 		"bays":           baysCount,
 		"timestamp":      now,
+		"top": fiber.Map{
+			"technicians": topTechnicians,
+			"units":       topUnits,
+			"companies":   topCompanies,
+			"bays":        topBays,
+		},
 	})
 }
 
@@ -321,19 +864,27 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 	if from == "" || to == "" {
 		return fiber.ErrBadRequest
 	}
-	fromTime, err := time.Parse(time.RFC3339, from)
+	// Be tolerant to fractional seconds: try RFC3339 then RFC3339Nano
+	parse := func(s string) (time.Time, error) {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t, nil
+		}
+		return time.Parse(time.RFC3339Nano, s)
+	}
+	fromTime, err := parse(from)
 	if err != nil {
 		return fiber.ErrBadRequest
 	}
-	toTime, err := time.Parse(time.RFC3339, to)
+	toTime, err := parse(to)
 	if err != nil {
 		return fiber.ErrBadRequest
 	}
 
 	filter := bson.M{
-		"start": bson.M{"$lt": toTime},
+		"status": bson.M{"$in": []models.BookingStatus{models.BookingOpen, models.BookingInProgress}},
+		"start":  bson.M{"$lt": toTime},
 		"$or": []bson.M{
-			{"end": bson.M{"$gt": fromTime}},
+			{"end": bson.M{"$gte": fromTime}},
 			{"end": bson.M{"$exists": false}},
 		},
 	}
@@ -343,19 +894,11 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 	}
 	defer cur.Close(h.ctx(c))
 
-	var items []models.Booking
+	items := make([]models.Booking, 0)
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
 	return c.JSON(items)
-}
-
-func formatServices(ids []primitive.ObjectID) string {
-	var parts []string
-	for _, id := range ids {
-		parts = append(parts, id.Hex())
-	}
-	return strings.Join(parts, ",")
 }
 
 func (h *Handler) loadBay(c *fiber.Ctx, bayID primitive.ObjectID) (models.Bay, error) {
@@ -366,9 +909,6 @@ func (h *Handler) loadBay(c *fiber.Ctx, bayID primitive.ObjectID) (models.Bay, e
 			return bay, fiber.NewError(fiber.StatusBadRequest, "bay not found")
 		}
 		return bay, fiber.ErrInternalServerError
-	}
-	if bay.Capacity <= 0 {
-		bay.Capacity = 3
 	}
 	return bay, nil
 }

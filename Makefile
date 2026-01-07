@@ -16,4 +16,3 @@ fmt:
 
 seed:
 	curl -X POST http://localhost:8090/debug/seed-admin || true
-

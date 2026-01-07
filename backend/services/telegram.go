@@ -15,10 +15,20 @@ type TelegramService struct {
 }
 
 type telegramMessage struct {
-	ChatID string `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID    string `json:"chat_id"`
+	Text      string `json:"text"`
+	ParseMode string `json:"parse_mode,omitempty"`
 }
 
+// Render replaces {key} placeholders in template with values from data.
+func Render(tpl string, data map[string]string) string {
+	out := []byte(tpl)
+	for k, v := range data {
+		placeholder := []byte(fmt.Sprintf("{%s}", k))
+		out = bytes.ReplaceAll(out, placeholder, []byte(v))
+	}
+	return string(out)
+}
 func NewTelegramService(token, chat string) *TelegramService {
 	return &TelegramService{
 		token:  token,
@@ -33,7 +43,7 @@ func (s *TelegramService) Notify(text string) error {
 		return nil
 	}
 
-	payload := telegramMessage{ChatID: s.chat, Text: text}
+	payload := telegramMessage{ChatID: s.chat, Text: text, ParseMode: "HTML"}
 	body, _ := json.Marshal(payload)
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", s.token)
 
