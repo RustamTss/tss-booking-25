@@ -42,9 +42,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        VITE_API_URL: https://bookings.tsstruckservice.com
+        VITE_API_URL: https://bookings.tsstruckservice.com/api
     environment:
-      - VITE_API_URL=https://bookings.tsstruckservice.com
+      - VITE_API_URL=https://bookings.tsstruckservice.com/api
     restart: unless-stopped
 
   nginx:
