@@ -6,11 +6,11 @@ services:
       - mongo_data:/data/db
       - ./mongo-init:/docker-entrypoint-initdb.d:ro
     environment:
-      - MONGO_INITDB_ROOT_USERNAME='admin'
-      - MONGO_INITDB_ROOT_PASSWORD='tssbooking25'
-      - MONGO_APP_DB=${MONGO_APP_DB:-shop}
-      - MONGO_APP_USER=${MONGO_APP_USER:-shop_user}
-      - MONGO_APP_PASSWORD=${MONGO_APP_PASSWORD:-changeMe}
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=tssbooking25
+      - MONGO_APP_DB=shop
+      - MONGO_APP_USER=shop_user
+      - MONGO_APP_PASSWORD=S3curePassw0rd
     healthcheck:
       test:
         [
@@ -27,11 +27,9 @@ services:
       dockerfile: Dockerfile.prod
     environment:
       - APP_PORT=8090
-      # Use the same DB name for app and URI to avoid mismatch
-      - MONGO_DB=${MONGO_APP_DB:-shop}
-      # Compose will resolve these from .env (supports ${VAR:-default} in YAML)
-      - MONGO_URI=mongodb://${MONGO_APP_USER:-shop_user}:${MONGO_APP_PASSWORD:-changeMe}@mongo:27017/${MONGO_APP_DB:-shop}?authSource=${MONGO_APP_DB:-shop}
-      - JWT_SECRET=${JWT_SECRET:?set}
+      - MONGO_DB=shop
+      - MONGO_URI=mongodb://shop_user:S3curePassw0rd@mongo:27017/shop?authSource=shop
+      - JWT_SECRET=prod_secret_change_me
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - TZ=America/New_York
