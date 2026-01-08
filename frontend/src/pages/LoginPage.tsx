@@ -29,9 +29,7 @@ function LoginPage() {
 		<div className='flex min-h-screen items-center justify-center bg-slate-50 px-4'>
 			<div className='w-full max-width-450 rounded-xl bg-white p-8 shadow-sm sm:max-w-md'>
 				<h1 className='text-xl font-semibold text-slate-900'>Sign in</h1>
-				<p className='mt-1 text-sm text-slate-600'>
-					Dayton Truck Repair — local version
-				</p>
+				<p className='mt-1 text-sm text-slate-600'>TSS SHOP — Booking System</p>
 
 				<form onSubmit={handleSubmit} className='mt-6 space-y-4'>
 					<label className='block text-sm font-medium text-slate-700'>

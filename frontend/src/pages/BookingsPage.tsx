@@ -1,4 +1,6 @@
 import {
+	ArrowDownTrayIcon,
+	ArrowPathIcon,
 	CheckCircleIcon,
 	PencilSquareIcon,
 	TrashIcon,
@@ -9,6 +11,7 @@ import { useMemo, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { api } from '../api/client'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
+import CustomSelect, { type Option } from '../components/shared/CustomSelect'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import ConfirmDeleteModal from '../components/shared/ui/ConfirmDeleteModal'
 import CreateButton from '../components/shared/ui/CreateButton'
@@ -28,7 +31,7 @@ function StatusBadge({ status }: { status: Booking['status'] }) {
 		<span
 			className={`rounded-full px-2 py-0.5 text-xs font-medium ${colors[status]}`}
 		>
-			{status}
+			{status === 'closed' ? 'ready' : status}
 		</span>
 	)
 }
@@ -67,11 +70,32 @@ function BookingsPage() {
 		queryKey: ['companies'],
 		queryFn: async () => (await api.get<Company[]>('/api/companies')).data,
 	})
+	// Filters
+	const [filterBay, setFilterBay] = useState<string>('')
+	const [filterTech, setFilterTech] = useState<string>('')
+	const [filterCompany, setFilterCompany] = useState<string>('')
+	const [filterUnit, setFilterUnit] = useState<string>('')
+	const [filterStatus, setFilterStatus] = useState<string>('')
 	const { data, isLoading, isError } = useQuery({
-		queryKey: ['bookings'],
+		queryKey: [
+			'bookings',
+			{
+				bay: filterBay,
+				tech: filterTech,
+				company: filterCompany,
+				unit: filterUnit,
+				status: filterStatus,
+			},
+		],
 		queryFn: async () => {
-			const res = await api.get<Booking[]>('/api/bookings')
-			return res.data
+			const params: Record<string, string> = {}
+			if (filterBay) params.bay_id = filterBay
+			if (filterTech) params.technician_id = filterTech
+			if (filterCompany) params.company_id = filterCompany
+			if (filterUnit) params.vehicle_id = filterUnit
+			if (filterStatus) params.status = filterStatus
+			const res = await api.get<Booking[]>('/api/bookings', { params })
+			return (res.data ?? []) as Booking[]
 		},
 	})
 
@@ -89,7 +113,7 @@ function BookingsPage() {
 		onSuccess: (_data, vars) => {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			if (vars.action === 'close') {
-				success('Booking closed')
+				success('Booking ready')
 			} else {
 				success('Booking canceled')
 			}
@@ -257,7 +281,7 @@ function BookingsPage() {
 								Edit
 							</button>
 						</CustomTooltip>
-						<CustomTooltip content='Close booking'>
+						<CustomTooltip content='Mark ready'>
 							<button
 								type='button'
 								onClick={() => mutation.mutate({ id: row.id, action: 'close' })}
@@ -265,7 +289,7 @@ function BookingsPage() {
 								disabled={mutation.isPending}
 							>
 								<CheckCircleIcon className='h-4 w-4' />
-								Close
+								Ready
 							</button>
 						</CustomTooltip>
 						<CustomTooltip content='Cancel booking'>
@@ -321,6 +345,66 @@ function BookingsPage() {
 		[baysQuery.data, vehiclesQuery.data, mutation, role]
 	)
 
+	const bayOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All bays', value: '' }] as Option<string>[]).concat(
+				(baysQuery.data ?? []).map(b => ({ label: b.name, value: b.id }))
+			),
+		[baysQuery.data]
+	)
+	const techOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All technicians', value: '' }] as Option<string>[]).concat(
+				(techniciansQuery.data ?? []).map(t => ({ label: t.name, value: t.id }))
+			),
+		[techniciansQuery.data]
+	)
+	const companyOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All companies', value: '' }] as Option<string>[]).concat(
+				(companiesQuery.data ?? []).map(c => ({ label: c.name, value: c.id }))
+			),
+		[companiesQuery.data]
+	)
+	const unitOptions = useMemo<Option<string>[]>(
+		() =>
+			([{ label: 'All units', value: '' }] as Option<string>[]).concat(
+				(vehiclesQuery.data ?? []).map(v => ({
+					label: v.plate || v.vin || v.id,
+					value: v.id,
+				}))
+			),
+		[vehiclesQuery.data]
+	)
+	const statusOptions: Option<string>[] = [
+		{ label: 'All statuses', value: '' },
+		{ label: 'open', value: 'open' },
+		// { label: 'in_progress', value: 'in_progress' },
+		{ label: 'ready', value: 'closed' }, // closed shown as ready
+		{ label: 'canceled', value: 'canceled' },
+	]
+
+	async function handleExport() {
+		const params: Record<string, string> = { export: 'csv' }
+		if (filterBay) params.bay_id = filterBay
+		if (filterTech) params.technician_id = filterTech
+		if (filterCompany) params.company_id = filterCompany
+		if (filterUnit) params.vehicle_id = filterUnit
+		if (filterStatus) params.status = filterStatus
+		const res = await api.get('/api/bookings', {
+			params,
+			responseType: 'blob',
+		})
+		const url = window.URL.createObjectURL(new Blob([res.data]))
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `bookings-${Date.now()}.csv`
+		document.body.appendChild(a)
+		a.click()
+		a.remove()
+		window.URL.revokeObjectURL(url)
+	}
+
 	if (isLoading)
 		return <p className='text-sm text-slate-600'>Loading bookings...</p>
 	if (isError || !data)
@@ -330,25 +414,104 @@ function BookingsPage() {
 		<div className='space-y-4'>
 			<div className='flex items-center justify-between'>
 				<h1 className='text-xl font-semibold text-slate-900'>Bookings</h1>
-				<CreateButton
+				<div className='flex items-center gap-2'>
+					<button
+						type='button'
+						onClick={handleExport}
+						className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+						title='Download CSV'
+					>
+						<ArrowDownTrayIcon className='h-4 w-4' />
+						Export
+					</button>
+					<CreateButton
+						onClick={() => {
+							setEditingId(null)
+							setForm({
+								complaint: '',
+								description: '',
+								fullbay_service_id: '',
+								vehicle_id: '',
+								bay_id: '',
+								technician_ids: [],
+								start: '',
+								end: '',
+								company_id: '',
+							})
+							setModalOpen(true)
+						}}
+					>
+						Create Booking
+					</CreateButton>
+				</div>
+			</div>
+
+			{/* Filters row similar to Calendar */}
+			<div className='flex flex-wrap items-center gap-2 justify-end'>
+				<div className='w-44'>
+					<CustomSelect
+						placeholder='All companies'
+						options={companyOptions}
+						value={
+							companyOptions.find(o => o.value === filterCompany) ??
+							companyOptions[0]
+						}
+						onChange={opt => setFilterCompany(opt.value)}
+					/>
+				</div>
+				<div className='w-48'>
+					<CustomSelect
+						placeholder='All units'
+						options={unitOptions}
+						value={
+							unitOptions.find(o => o.value === filterUnit) ?? unitOptions[0]
+						}
+						onChange={opt => setFilterUnit(opt.value)}
+					/>
+				</div>
+				<div className='w-40'>
+					<CustomSelect
+						placeholder='All bays'
+						options={bayOptions}
+						value={bayOptions.find(o => o.value === filterBay) ?? bayOptions[0]}
+						onChange={opt => setFilterBay(opt.value)}
+					/>
+				</div>
+				<div className='w-52'>
+					<CustomSelect
+						placeholder='All technicians'
+						options={techOptions}
+						value={
+							techOptions.find(o => o.value === filterTech) ?? techOptions[0]
+						}
+						onChange={opt => setFilterTech(opt.value)}
+					/>
+				</div>
+				<div className='w-36'>
+					<CustomSelect
+						placeholder='All statuses'
+						options={statusOptions}
+						value={
+							statusOptions.find(o => o.value === filterStatus) ??
+							statusOptions[0]
+						}
+						onChange={opt => setFilterStatus(opt.value)}
+					/>
+				</div>
+				<button
+					type='button'
 					onClick={() => {
-						setEditingId(null)
-						setForm({
-							complaint: '',
-							description: '',
-							fullbay_service_id: '',
-							vehicle_id: '',
-							bay_id: '',
-							technician_ids: [],
-							start: '',
-							end: '',
-							company_id: '',
-						})
-						setModalOpen(true)
+						setFilterBay('')
+						setFilterTech('')
+						setFilterCompany('')
+						setFilterUnit('')
+						setFilterStatus('')
 					}}
+					className='inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
 				>
-					Create Booking
-				</CreateButton>
+					<ArrowPathIcon className='h-4 w-4' />
+					Reset
+				</button>
 			</div>
 
 			<CustomTable
@@ -364,7 +527,10 @@ function BookingsPage() {
 				form={form}
 				units={(vehiclesQuery.data ?? []).map(v => ({
 					id: v.id,
-					label: v.plate || v.vin,
+					label:
+						(v.plate || v.vin) + (v.company_name ? ` (${v.company_name})` : ''),
+					company_id: (v as any).company_id,
+					company_name: (v as any).company_name,
 				}))}
 				bays={(baysQuery.data ?? []).map(b => ({ id: b.id, label: b.name }))}
 				companies={(companiesQuery.data ?? []).map(c => ({

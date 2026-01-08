@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"fmt"
 	"strings"
 	"time"
@@ -43,9 +45,42 @@ func parseObjectIDs(values []string) ([]primitive.ObjectID, error) {
 }
 
 func (h *Handler) ListBookings(c *fiber.Ctx) error {
+	// Build filters from query params
+	filter := bson.M{}
+	if v := c.Query("company_id"); v != "" {
+		if id, err := asObjectID(v); err == nil {
+			filter["company_id"] = id
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid company_id")
+		}
+	}
+	if v := c.Query("vehicle_id"); v != "" {
+		if id, err := asObjectID(v); err == nil {
+			filter["vehicle_id"] = id
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid vehicle_id")
+		}
+	}
+	if v := c.Query("bay_id"); v != "" {
+		if id, err := asObjectID(v); err == nil {
+			filter["bay_id"] = id
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid bay_id")
+		}
+	}
+	if v := c.Query("status"); v != "" {
+		filter["status"] = models.BookingStatus(v)
+	}
+	if v := c.Query("technician_id"); v != "" {
+		if id, err := asObjectID(v); err == nil {
+			filter["technician_ids"] = bson.M{"$in": []primitive.ObjectID{id}}
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid technician_id")
+		}
+	}
 	cur, err := h.DB.Collection(bookingCollection).Find(
 		h.ctx(c),
-		bson.D{},
+		filter,
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}),
 	)
 	if err != nil {
@@ -56,6 +91,126 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 	var items []models.Booking
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
+	}
+	// CSV export if requested
+	if exp := strings.ToLower(c.Query("export")); exp == "csv" || exp == "excel" {
+		// Resolve referenced labels (unit plate/vin, bay/company names, technician names)
+		vehicleIDs := make([]primitive.ObjectID, 0)
+		bayIDs := make([]primitive.ObjectID, 0)
+		companyIDs := make([]primitive.ObjectID, 0)
+		techIDSet := map[primitive.ObjectID]struct{}{}
+		for _, b := range items {
+			vehicleIDs = append(vehicleIDs, b.VehicleID)
+			bayIDs = append(bayIDs, b.BayID)
+			if b.CompanyID != primitive.NilObjectID {
+				companyIDs = append(companyIDs, b.CompanyID)
+			}
+			for _, t := range b.TechnicianIDs {
+				techIDSet[t] = struct{}{}
+			}
+		}
+		techIDs := make([]primitive.ObjectID, 0, len(techIDSet))
+		for id := range techIDSet {
+			techIDs = append(techIDs, id)
+		}
+		vehicleLabels := map[primitive.ObjectID]string{}
+		if len(vehicleIDs) > 0 {
+			cur, _ := h.DB.Collection(vehicleCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": vehicleIDs}})
+			defer cur.Close(h.ctx(c))
+			for cur.Next(h.ctx(c)) {
+				var v models.Vehicle
+				if err := cur.Decode(&v); err == nil {
+					label := v.Plate
+					if label == "" {
+						label = v.VIN
+					}
+					vehicleLabels[v.ID] = label
+				}
+			}
+		}
+		bayNames := map[primitive.ObjectID]string{}
+		if len(bayIDs) > 0 {
+			cur, _ := h.DB.Collection(bayCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": bayIDs}})
+			defer cur.Close(h.ctx(c))
+			for cur.Next(h.ctx(c)) {
+				var b models.Bay
+				if err := cur.Decode(&b); err == nil {
+					bayNames[b.ID] = b.Name
+				}
+			}
+		}
+		companyNames := map[primitive.ObjectID]string{}
+		if len(companyIDs) > 0 {
+			cur, _ := h.DB.Collection(companyCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": companyIDs}})
+			defer cur.Close(h.ctx(c))
+			for cur.Next(h.ctx(c)) {
+				var comp models.Company
+				if err := cur.Decode(&comp); err == nil {
+					companyNames[comp.ID] = comp.Name
+				}
+			}
+		}
+		techNames := map[primitive.ObjectID]string{}
+		if len(techIDs) > 0 {
+			cur, _ := h.DB.Collection(technicianCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": techIDs}})
+			defer cur.Close(h.ctx(c))
+			for cur.Next(h.ctx(c)) {
+				var t models.Technician
+				if err := cur.Decode(&t); err == nil {
+					techNames[t.ID] = t.Name
+				}
+			}
+		}
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.Write([]string{
+			"number", "complaint", "description", "unit", "bay", "company", "technicians",
+			"start", "end", "status",
+		})
+		const pretty = "01/02/2006, 03:04 PM"
+		for _, b := range items {
+			end := ""
+			if b.End != nil {
+				end = b.End.In(h.TZ).Format(pretty)
+			}
+			unit := vehicleLabels[b.VehicleID]
+			if unit == "" {
+				unit = b.VehicleID.Hex()
+			}
+			bay := bayNames[b.BayID]
+			if bay == "" {
+				bay = b.BayID.Hex()
+			}
+			company := ""
+			if b.CompanyID != primitive.NilObjectID {
+				company = companyNames[b.CompanyID]
+				if company == "" {
+					company = b.CompanyID.Hex()
+				}
+			}
+			var techs []string
+			for _, t := range b.TechnicianIDs {
+				if name := techNames[t]; name != "" {
+					techs = append(techs, name)
+				}
+			}
+			_ = w.Write([]string{
+				b.Number,
+				b.Complaint,
+				b.Description,
+				unit,
+				bay,
+				company,
+				strings.Join(techs, ", "),
+				b.Start.In(h.TZ).Format(pretty),
+				end,
+				string(b.Status),
+			})
+		}
+		w.Flush()
+		c.Set("Content-Type", "text/csv")
+		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"bookings-%d.csv\"", time.Now().Unix()))
+		return c.Send(buf.Bytes())
 	}
 	return c.JSON(items)
 }
@@ -217,6 +372,9 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 	_ = h.DB.Collection(settingsCollection).FindOne(h.ctx(c), bson.M{"_id": "global"}).Decode(&settings)
 	if settings.TelegramTemplate != "" {
 		data := h.buildTelegramData(c, booking)
+		// status placeholders for template
+		data["status_icon"] = "🆕"
+		data["status_name"] = "New booking"
 		msg := services.Render(settings.TelegramTemplate, data)
 		if strings.TrimSpace(msg) == "" {
 			// Fallback rich message
@@ -401,6 +559,17 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 		_ = h.DB.Collection(settingsCollection).FindOne(h.ctx(c), bson.M{"_id": "global"}).Decode(&settings)
 		if settings.TelegramTemplate != "" {
 			data := h.buildTelegramData(c, updatedBooking)
+			// Distinguish reschedule vs other updates for template placeholders
+			timeChanged := !existingBooking.Start.Equal(updatedBooking.Start) ||
+				((existingBooking.End == nil) != (updatedBooking.End == nil)) ||
+				(existingBooking.End != nil && updatedBooking.End != nil && !existingBooking.End.Equal(*updatedBooking.End))
+			if timeChanged {
+				data["status_icon"] = "📅"
+				data["status_name"] = "Booking rescheduled"
+			} else {
+				data["status_icon"] = "✏️"
+				data["status_name"] = "Booking updated"
+			}
 			msg := services.Render(settings.TelegramTemplate, data)
 			_ = h.Telegram.Notify(msg)
 		}
@@ -621,6 +790,7 @@ func (h *Handler) buildTelegramData(c *fiber.Ctx, b models.Booking) map[string]s
 }
 
 func (h *Handler) renderTelegramFallback(kind string, b models.Booking, data map[string]string) string {
+	// Resolve status icon/title
 	icon := "ℹ️"
 	title := "Booking"
 	switch kind {
@@ -635,14 +805,16 @@ func (h *Handler) renderTelegramFallback(kind string, b models.Booking, data map
 		title = "Booking canceled"
 	case "closed":
 		icon = "✅"
-		title = "Booking closed"
+		title = "Booking ready"
 	}
+	// Dates formatted like UI
 	const pretty = "01/02/2006, 03:04 PM"
 	start := b.Start.In(h.TZ).Format(pretty)
 	end := ""
 	if b.End != nil {
 		end = b.End.In(h.TZ).Format(pretty)
 	}
+	// Resolve unit label
 	unit := data["unit"]
 	if unit == "" {
 		unit = data["vehicle_plate"]
@@ -658,32 +830,46 @@ func (h *Handler) renderTelegramFallback(kind string, b models.Booking, data map
 	if number == "" {
 		number = b.ID.Hex()
 	}
-	msg := fmt.Sprintf("%s <b>%s</b>\n<b>#%s</b>\n", icon, title, number)
-	if unit != "" {
-		msg += fmt.Sprintf("Unit: <b>%s</b>\n", unit)
+	// Build rich, consistent message
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s <b>%s</b> • <b>#%s</b>\n\n", icon, title, number)
+	if c := data["complaint"]; c != "" {
+		fmt.Fprintf(&sb, "<b>Complaint:</b> %s\n", c)
 	}
-	if company != "" {
-		msg += fmt.Sprintf("Company: %s\n", company)
+	if d := data["description"]; d != "" {
+		fmt.Fprintf(&sb, "<b>Description:</b> %s\n\n", d)
+	} else {
+		sb.WriteString("\n")
+	}
+	if unit != "" || (data["unit_plate"] != "" || data["unit_vin"] != "") {
+		fmt.Fprintf(&sb, "<b>Unit:</b> %s", unit)
+		plate, vin := data["unit_plate"], data["unit_vin"]
+		if plate != "" || vin != "" {
+			fmt.Fprintf(&sb, "  (%s %s)", plate, vin)
+		}
+		sb.WriteString("\n")
 	}
 	if bay != "" {
-		msg += fmt.Sprintf("Bay: %s\n", bay)
+		fmt.Fprintf(&sb, "<b>Bay:</b> %s\n", bay)
+	}
+	if company != "" {
+		fmt.Fprintf(&sb, "<b>Company:</b> %s\n", company)
 	}
 	if service != "" {
-		msg += fmt.Sprintf("Service: %s\n", service)
+		fmt.Fprintf(&sb, "<b>Fullbay Service ID:</b> %s\n\n", service)
+	} else {
+		sb.WriteString("\n")
 	}
 	if techs != "" {
-		msg += fmt.Sprintf("Technicians: %s\n", techs)
-	}
-	if end != "" {
-		msg += fmt.Sprintf("Time: %s — %s\n", start, end)
+		fmt.Fprintf(&sb, "<b>Technicians:</b> %s\n\n", techs)
 	} else {
-		msg += fmt.Sprintf("Start: %s\n", start)
+		sb.WriteString("\n")
 	}
-	desc := data["description"]
-	if desc != "" {
-		msg += fmt.Sprintf("Notes: %s", desc)
+	fmt.Fprintf(&sb, "<b>Start:</b> %s\n", start)
+	if end != "" {
+		fmt.Fprintf(&sb, "<b>End:</b> %s\n", end)
 	}
-	return msg
+	return sb.String()
 }
 
 func (h *Handler) findConflictingBookings(c *fiber.Ctx, bayID primitive.ObjectID) ([]models.Booking, error) {

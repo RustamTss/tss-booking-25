@@ -1,12 +1,17 @@
 import { PlusIcon } from '@heroicons/react/24/outline'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import CustomAutocomplete from '../shared/CustomAutocomplete'
 import CustomInput from '../shared/CustomInput'
 import CustomModal from '../shared/CustomModal'
 import MultiAutocomplete from '../shared/MultiAutocomplete'
 
-type Option = { id: string; label: string }
+type Option = {
+	id: string
+	label: string
+	company_id?: string
+	company_name?: string
+}
 
 type BookingForm = {
 	description: string
@@ -62,37 +67,54 @@ export default function BookingQuickModal({
 		}, [value, delay])
 		return debounced
 	}
-	const debouncedUnitQ = useDebounce(unitQuery, 300)
-	const debouncedCompanyQ = useDebounce(companyQuery, 300)
+	const debouncedUnitQ = useDebounce(unitQuery, 250)
+	const debouncedCompanyQ = useDebounce(companyQuery, 250)
 
 	useEffect(() => {
 		const fetchUnits = async () => {
 			const q = debouncedUnitQ.trim()
-			if (q.length === 0 || q.length >= 3) {
+			// search from 1 char; if empty, still load first page
+			if (q.length === 0 || q.length >= 1) {
 				const res = await api.get<
-					{ id: string; plate: string; vin: string; nickname?: string }[]
+					{
+						id: string
+						plate: string
+						vin: string
+						nickname?: string
+						company_id?: string
+						company_name?: string
+					}[]
 				>('/api/vehicles', {
-					params: { limit: 10, page: 1, q: q.length >= 3 ? q : undefined },
+					params: {
+						limit: 10,
+						page: 1,
+						q: q.length >= 1 ? q : undefined,
+						company_id: form.company_id || undefined,
+					},
 				})
 				setUnitOptions(
 					(res.data ?? []).map(v => ({
 						id: v.id,
-						label: v.plate || v.nickname || v.vin || '—',
+						label:
+							(v.plate || v.nickname || v.vin || '—') +
+							(v.company_name ? ` (${v.company_name})` : ''),
+						company_id: v.company_id,
+						company_name: v.company_name,
 					}))
 				)
 			}
 		}
 		void fetchUnits()
-	}, [debouncedUnitQ])
+	}, [debouncedUnitQ, form.company_id])
 
 	useEffect(() => {
 		const fetchCompanies = async () => {
 			const q = debouncedCompanyQ.trim()
-			if (q.length === 0 || q.length >= 3) {
+			if (q.length === 0 || q.length >= 1) {
 				const res = await api.get<{ id: string; name: string }[]>(
 					'/api/companies',
 					{
-						params: { limit: 10, page: 1, q: q.length >= 3 ? q : undefined },
+						params: { limit: 10, page: 1, q: q.length >= 1 ? q : undefined },
 					}
 				)
 				setCompanyOptions(
@@ -177,15 +199,39 @@ export default function BookingQuickModal({
 								  }
 								: undefined
 						}
-						onChange={opt => onChange({ vehicle_id: opt.value })}
-						options={Array.from(
-							new Map(
-								[...unitOptions, ...units].map(v => [
-									v.id,
-									{ label: v.label, value: v.id },
-								])
-							).values()
-						)}
+						onChange={opt => {
+							if (opt.value === '') {
+								onChange({ vehicle_id: '' })
+								return
+							}
+							// auto-set company from chosen unit when available
+							const merged = new Map<string, Option>()
+							unitOptions.forEach(u => merged.set(u.id, u))
+							;(units as Option[]).forEach(u => merged.set(u.id, u))
+							const chosen = merged.get(opt.value)
+							if (chosen?.company_id) {
+								onChange({
+									vehicle_id: opt.value,
+									company_id: chosen.company_id,
+								})
+							} else {
+								onChange({ vehicle_id: opt.value })
+							}
+						}}
+						options={useMemo(() => {
+							// merge remote + provided; filter by selected company
+							const merged = new Map<string, Option>()
+							unitOptions.forEach(u => merged.set(u.id, u))
+							;(units as Option[]).forEach(u => merged.set(u.id, u))
+							let arr = Array.from(merged.values())
+							if (form.company_id) {
+								arr = arr.filter(o =>
+									o.company_id ? o.company_id === form.company_id : true
+								)
+							}
+							const opts = arr.map(v => ({ label: v.label, value: v.id }))
+							return [{ label: '— Clear —', value: '' }, ...opts]
+						}, [unitOptions, units, form.company_id])}
 						onQueryChange={q => setUnitQuery(q)}
 						placeholder='Select unit'
 					/>
@@ -215,18 +261,33 @@ export default function BookingQuickModal({
 											companyOptions.find(c => c.id === form.company_id)
 												?.label ||
 											companies.find(c => c.id === form.company_id)?.label ||
+											// fallback: derive from any unit that carries this company_id
+											unitOptions.find(u => u.company_id === form.company_id)
+												?.company_name ||
+											(units as Option[]).find(
+												u => u.company_id === form.company_id
+											)?.company_name ||
 											'',
 										value: form.company_id,
 								  }
 								: undefined
 						}
-						onChange={opt => onChange({ company_id: opt.value })}
+						onChange={opt => {
+							if (opt.value === '') {
+								onChange({ company_id: '', vehicle_id: '' })
+								setUnitQuery('')
+								return
+							}
+							onChange({ company_id: opt.value, vehicle_id: '' })
+							setUnitQuery('')
+						}}
 						options={Array.from(
 							new Map(
-								[...companyOptions, ...companies].map(c => [
-									c.id,
-									{ label: c.label, value: c.id },
-								])
+								[
+									{ id: '', label: '— Clear —' } as Option,
+									...companyOptions,
+									...companies,
+								].map(c => [c.id, { label: c.label, value: c.id }])
 							).values()
 						)}
 						onQueryChange={q => setCompanyQuery(q)}
@@ -237,6 +298,7 @@ export default function BookingQuickModal({
 							<div className='mb-1 font-medium text-slate-700'>Start</div>
 							<input
 								type='datetime-local'
+								lang='en-US'
 								value={form.start}
 								onChange={e => onChange({ start: e.target.value })}
 								className='w-full rounded-lg border border-slate-200 px-3 py-2 text-sm'
@@ -248,6 +310,7 @@ export default function BookingQuickModal({
 							</div>
 							<input
 								type='datetime-local'
+								lang='en-US'
 								value={form.end}
 								onChange={e => onChange({ end: e.target.value })}
 								className='w-full rounded-lg border border-slate-200 px-3 py-2 text-sm'

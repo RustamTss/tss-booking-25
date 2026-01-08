@@ -84,16 +84,17 @@ function SettingsPage() {
 						onChange={v => setTgForm(p => ({ ...p, telegram_template: v }))}
 						rows={14}
 						placeholder={
-							'Booking #{booking_id}\nComplaint: {complaint}\nUnit: {unit}\nDate: {start} {end}\nFullbay Service ID: {fullbay_service_id}'
+							'{status_icon} <b>{status_name}</b> • <b>#{booking_id}</b>\n\n<b>Complaint:</b> {complaint}\n<b>Description:</b> {description}\n\n<b>Unit:</b> {unit} ({unit_plate} {unit_vin})\n<b>Bay:</b> {bay_name}\n<b>Company:</b> {company_name}\n<b>Fullbay Service ID:</b> {fullbay_service_id}\n\n<b>Technicians:</b> {technician_names}\n\n<b>Start:</b> {start}\n<b>End:</b> {end}'
 						}
-						helperText='Use placeholders like {booking_id}, {complaint}, {unit}, {fullbay_service_id}, {bay_name}, {start}'
+						helperText='Use placeholders like {status_icon}, {status_name}, {booking_id}, {complaint}, {description}, {unit}, {unit_plate}, {unit_vin}, {bay_name}, {company_name}, {technician_names}, {start}, {end}, {fullbay_service_id}'
 					/>
 					<div className='mt-2 flex flex-wrap gap-2 text-xs'>
 						{[
+							'status_icon',
+							'status_name',
 							'booking_id',
 							'complaint',
 							'description',
-							'status',
 							'start',
 							'end',
 							'bay_name',

@@ -19,6 +19,7 @@ import {
 	dateFnsLocalizer,
 	type Components as RBCComponents,
 	type Event as RBCEvent,
+	type EventProps as RBCEventProps,
 	type SlotInfo,
 	type View,
 } from 'react-big-calendar'
@@ -302,6 +303,29 @@ function CalendarPage() {
 		filterCompany,
 	])
 
+	// Event appearance (Google Calendar-like)
+	const eventPropGetter: NonNullable<
+		React.ComponentProps<typeof BigCalendar>['eventPropGetter']
+	> = () => {
+		const color = '#039be5'
+		return {
+			className: 'gcal-event',
+			style: {
+				backgroundColor: color,
+				border: `1px solid #fff`,
+				borderLeft: `2px solid #fff`,
+				color: '#fff',
+				borderRadius: 6,
+				padding: '2px 6px',
+			},
+		}
+	}
+
+	// Keep compact content; we don't expand details here
+	const EventContent = ({ title }: RBCEventProps<RBCEvent>) => {
+		return <span className='gcal-event-content'>{title as string}</span>
+	}
+
 	const formatForInput = (d: Date) => {
 		const pad = (n: number) => String(n).padStart(2, '0')
 		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
@@ -375,7 +399,7 @@ function CalendarPage() {
 							setModalOpen(true)
 						}}
 					>
-						Creating Booking
+						Create Booking
 					</CreateButton>
 				</div>
 			</div>
@@ -453,14 +477,16 @@ function CalendarPage() {
 						events={events}
 						date={date}
 						view={view}
+						eventPropGetter={eventPropGetter}
+						components={{ ...mainCalendarComponents, event: EventContent }}
 						popup
 						onView={(v: View) => setView(v as ViewMode)}
 						onNavigate={(d: Date) => setDate(d)}
 						defaultView={Views.MONTH}
 						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
-						scrollToTime={new Date(1970, 0, 1, 0, 0, 0)}
-						min={new Date(1970, 0, 1, 0, 0, 0)}
-						max={new Date(1970, 0, 1, 23, 59, 59)}
+						scrollToTime={new Date(1970, 0, 1, 6, 0, 0)}
+						min={new Date(1970, 0, 1, 6, 0, 0)}
+						max={new Date(1970, 0, 1, 21, 0, 0)}
 						style={{ height: '100%' }}
 						onSelectEvent={(event: RBCEvent) => {
 							const booking = event.resource as Booking
@@ -562,7 +588,11 @@ function CalendarPage() {
 				form={form}
 				units={(vehiclesQuery.data ?? []).map(v => ({
 					id: v.id,
-					label: v.plate || v.vin || `${v.make} ${v.model}`,
+					label:
+						(v.plate || v.vin || `${v.make} ${v.model}`) +
+						(v.company_name ? ` (${v.company_name})` : ''),
+					company_id: (v as any).company_id,
+					company_name: (v as any).company_name,
 				}))}
 				bays={(baysQuery.data ?? []).map(b => ({ id: b.id, label: b.name }))}
 				companies={(companiesQuery.data ?? []).map(c => ({
@@ -640,13 +670,19 @@ function CalendarPage() {
 						events={events}
 						date={date}
 						view={view}
+						eventPropGetter={eventPropGetter}
+						components={{
+							...fullscreenCalendarComponents,
+							event: EventContent,
+						}}
 						onView={(v: View) => setView(v as ViewMode)}
 						onNavigate={(d: Date) => setDate(d)}
 						defaultView={Views.MONTH}
 						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
-						scrollToTime={new Date(1970, 0, 1, 0, 0, 0)}
-						min={new Date(1970, 0, 1, 0, 0, 0)}
-						max={new Date(1970, 0, 1, 23, 59, 59)}
+						// Working hours: 6 AM - 9 PM in day/week views
+						scrollToTime={new Date(1970, 0, 1, 6, 0, 0)}
+						min={new Date(1970, 0, 1, 6, 0, 0)}
+						max={new Date(1970, 0, 1, 21, 0, 0)}
 						style={{ height: '100%' }}
 						components={fullscreenCalendarComponents}
 						onSelectEvent={(event: RBCEvent) => {

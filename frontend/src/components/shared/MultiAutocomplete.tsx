@@ -36,7 +36,7 @@ export default function MultiAutocomplete<T>({
 					{required ? <span className='ml-1 text-rose-600'>*</span> : null}
 				</div>
 			) : null}
-			<Combobox value={value} onChange={onChange} multiple>
+			<Combobox value={value} onChange={onChange} multiple by='value'>
 				<div className='relative'>
 					<div className='relative w-full cursor-default overflow-hidden rounded-lg bg-white text-left border border-slate-200 focus:outline-none'>
 						<Combobox.Input

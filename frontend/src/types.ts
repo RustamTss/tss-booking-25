@@ -40,6 +40,7 @@ export interface Contact {
 export interface Vehicle {
 	id: string
 	company_id: string
+	company_name?: string
 	type: 'truck' | 'trailer'
 	vin: string
 	plate: string

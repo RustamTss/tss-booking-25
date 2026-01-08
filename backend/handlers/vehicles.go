@@ -69,7 +69,42 @@ func (h *Handler) ListVehicles(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(items)
+	// Enrich with company names so clients can show "Plate (Company)"
+	idsSet := map[primitive.ObjectID]struct{}{}
+	for _, v := range items {
+		if v.CompanyID != primitive.NilObjectID {
+			idsSet[v.CompanyID] = struct{}{}
+		}
+	}
+	ids := make([]primitive.ObjectID, 0, len(idsSet))
+	for id := range idsSet {
+		ids = append(ids, id)
+	}
+	nameByID := map[primitive.ObjectID]string{}
+	if len(ids) > 0 {
+		ccur, err := h.DB.Collection(companyCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": ids}})
+		if err == nil {
+			defer ccur.Close(h.ctx(c))
+			for ccur.Next(h.ctx(c)) {
+				var comp models.Company
+				if err := ccur.Decode(&comp); err == nil {
+					nameByID[comp.ID] = comp.Name
+				}
+			}
+		}
+	}
+	type vehicleOut struct {
+		models.Vehicle `bson:",inline" json:",inline"`
+		CompanyName    string `json:"company_name,omitempty"`
+	}
+	out := make([]vehicleOut, 0, len(items))
+	for _, v := range items {
+		out = append(out, vehicleOut{
+			Vehicle:     v,
+			CompanyName: nameByID[v.CompanyID],
+		})
+	}
+	return c.JSON(out)
 }
 
 // GetVehicle returns one vehicle by id

@@ -244,7 +244,7 @@ export default function BookingDetailsPage() {
 						return {
 							id: l.id,
 							type: 'status',
-							details: <span>Booking closed.</span>,
+							details: <span>Booking ready.</span>,
 							time: new Date(l.created_at).toLocaleString(),
 						}
 					}
