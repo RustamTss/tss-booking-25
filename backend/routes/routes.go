@@ -12,7 +12,7 @@ import (
 func Register(app *fiber.App, h *handlers.Handler) {
 	app.Use(logger.New())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "https://bookings.tsstruckservice.com,http://bookings.tsstruckservice.com,http://localhost:5190,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
+		AllowOrigins:     "https://bookings.tsstruckservice.com,http://bookings.tsstruckservice.com,http://167.71.168.200,http://localhost:5190,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
 		AllowHeaders:     "Authorization,Content-Type",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowCredentials: true,
