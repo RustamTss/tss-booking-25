@@ -27,8 +27,10 @@ services:
       dockerfile: Dockerfile.prod
     environment:
       - APP_PORT=8090
-      - MONGO_DB=${MONGO_DB:-shop}
-      - MONGO_URI=${MONGO_URI}
+      # Use the same DB name for app and URI to avoid mismatch
+      - MONGO_DB=${MONGO_APP_DB:-shop}
+      # Compose will resolve these from .env (supports ${VAR:-default} in YAML)
+      - MONGO_URI=mongodb://${MONGO_APP_USER:-shop_user}:${MONGO_APP_PASSWORD:-changeMe}@mongo:27017/${MONGO_APP_DB:-shop}?authSource=${MONGO_APP_DB:-shop}
       - JWT_SECRET=${JWT_SECRET:?set}
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
