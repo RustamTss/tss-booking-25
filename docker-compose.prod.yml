@@ -15,7 +15,7 @@ services:
       test:
         [
           'CMD-SHELL',
-          'mongosh --quiet --eval ''db.runCommand({ping:1}).ok'' --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin | grep 1',
+          'mongosh --quiet "mongodb://$MONGO_APP_USER:$MONGO_APP_PASSWORD@localhost:27017/$MONGO_APP_DB?authSource=$MONGO_APP_DB" --eval ''db.runCommand({ping:1}).ok'' | grep 1',
         ]
       interval: 10s
       timeout: 5s
