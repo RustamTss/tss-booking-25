@@ -549,7 +549,6 @@ function CalendarPage() {
 							}) as unknown as (events: RBCEvent[], date: Date) => void
 						}
 						// Hide the built-in overlay popup via a null component
-						components={mainCalendarComponents}
 					/>
 					<CalendarMenuDropdown
 						open={moreState.open}
@@ -684,7 +683,6 @@ function CalendarPage() {
 						min={new Date(1970, 0, 1, 6, 0, 0)}
 						max={new Date(1970, 0, 1, 21, 0, 0)}
 						style={{ height: '100%' }}
-						components={fullscreenCalendarComponents}
 						onSelectEvent={(event: RBCEvent) => {
 							const booking = event.resource as Booking
 							setForm(prev => ({
