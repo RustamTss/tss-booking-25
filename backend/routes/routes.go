@@ -19,6 +19,8 @@ func Register(app *fiber.App, h *handlers.Handler) {
 		websocket.Config{
 			HandshakeTimeout: 5 * time.Second,
 			Origins: []string{
+				"https://bookings.tsstruckservice.com",
+				"http://bookings.tsstruckservice.com",
 				"http://localhost:5190",
 				"http://localhost:5173",
 				"http://127.0.0.1:5173",
