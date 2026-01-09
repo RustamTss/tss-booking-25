@@ -19,6 +19,7 @@ function VehiclesPage() {
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 	const [form, setForm] = useState<{
 		company_id: string
+		company_name?: string
 		type: Vehicle['type']
 		vin: string
 		plate: string
@@ -46,8 +47,18 @@ function VehiclesPage() {
 	})
 
 	const createMutation = useMutation({
-		mutationFn: async () =>
-			api.post('/api/vehicles', { ...form, year: Number(form.year) }),
+		mutationFn: async () => {
+			const payload = {
+				company_id: form.company_id,
+				type: form.type,
+				vin: form.vin,
+				plate: form.plate,
+				make: form.make,
+				model: form.model,
+				year: Number(form.year),
+			}
+			return api.post('/api/vehicles', payload)
+		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['vehicles'] })
 			setForm({
@@ -65,8 +76,18 @@ function VehiclesPage() {
 		onError: () => error('Failed to create unit'),
 	})
 	const updateMutation = useMutation({
-		mutationFn: async (id: string) =>
-			api.put(`/api/vehicles/${id}`, { ...form, year: Number(form.year) }),
+		mutationFn: async (id: string) => {
+			const payload = {
+				company_id: form.company_id,
+				type: form.type,
+				vin: form.vin,
+				plate: form.plate,
+				make: form.make,
+				model: form.model,
+				year: Number(form.year),
+			}
+			return api.put(`/api/vehicles/${id}`, payload)
+		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ['vehicles'] })
 			setEditingId(null)
@@ -88,6 +109,7 @@ function VehiclesPage() {
 		setEditingId(null)
 		setForm({
 			company_id: '',
+			company_name: '',
 			type: 'truck',
 			vin: '',
 			plate: '',
@@ -101,6 +123,7 @@ function VehiclesPage() {
 		setEditingId(v.id)
 		setForm({
 			company_id: v.company_id,
+			company_name: v.company_name || '',
 			type: v.type,
 			vin: v.vin,
 			plate: v.plate,

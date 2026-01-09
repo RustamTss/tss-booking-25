@@ -268,7 +268,8 @@ function BookingsPage() {
 										fullbay_service_id: row.fullbay_service_id ?? '',
 										vehicle_id: row.vehicle_id,
 										bay_id: row.bay_id,
-										technician_ids: row.technician_ids,
+										technician_ids:
+											(row.technician_ids as string[] | undefined) || [],
 										start: row.start.slice(0, 16),
 										end: row.end ? row.end.slice(0, 16) : '',
 										company_id: row.company_id ?? '',
@@ -529,8 +530,9 @@ function BookingsPage() {
 					id: v.id,
 					label:
 						(v.plate || v.vin) + (v.company_name ? ` (${v.company_name})` : ''),
-					company_id: (v as any).company_id,
-					company_name: (v as any).company_name,
+					company_id: (v as unknown as { company_id?: string }).company_id,
+					company_name: (v as unknown as { company_name?: string })
+						.company_name,
 				}))}
 				bays={(baysQuery.data ?? []).map(b => ({ id: b.id, label: b.name }))}
 				companies={(companiesQuery.data ?? []).map(c => ({

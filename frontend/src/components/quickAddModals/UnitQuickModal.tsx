@@ -1,4 +1,6 @@
 import { CheckIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../../api/client'
 import type { Vehicle } from '../../types'
 import CustomAutocomplete from '../shared/CustomAutocomplete'
 import CustomInput from '../shared/CustomInput'
@@ -7,6 +9,7 @@ import CustomSelect from '../shared/CustomSelect'
 
 type UnitForm = {
 	company_id: string
+	company_name?: string
 	type: Vehicle['type']
 	vin: string
 	plate: string
@@ -40,6 +43,77 @@ export default function UnitQuickModal({
 	onCancel,
 	onSubmit,
 }: Props) {
+	// Remote search for companies (like in BookingQuickModal)
+	const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([])
+	const [companyQuery, setCompanyQuery] = useState('')
+
+	// small debounce helper
+	const useDebounce = (value: string, delay: number) => {
+		const [debounced, setDebounced] = useState(value)
+		useEffect(() => {
+			const t = setTimeout(() => setDebounced(value), delay)
+			return () => clearTimeout(t)
+		}, [value, delay])
+		return debounced
+	}
+	const debouncedCompanyQ = useDebounce(companyQuery, 250)
+
+	useEffect(() => {
+		const fetchCompanies = async () => {
+			const q = debouncedCompanyQ.trim()
+			// if empty, still load first page to allow picking from full set
+			if (q.length === 0 || q.length >= 1) {
+				const res = await api.get<{ id: string; name: string }[]>(
+					'/api/companies',
+					{
+						params: {
+							limit: 10,
+							page: 1,
+							q: q.length >= 1 ? q : undefined,
+						},
+					}
+				)
+				setCompanyOptions(res.data ?? [])
+			}
+		}
+		void fetchCompanies()
+	}, [debouncedCompanyQ])
+
+	// Build a merged map so value label and options come from the same source
+	const mergedCompanyMap = useMemo(() => {
+		const m = new Map<string, CompanyOption>()
+		companyOptions.forEach(c => m.set(c.id, c))
+		companies.forEach(c => m.set(c.id, c))
+		return m
+	}, [companyOptions, companies])
+
+	const currentCompanyValue =
+		form.company_id && mergedCompanyMap.has(form.company_id)
+			? {
+					label: mergedCompanyMap.get(form.company_id)!.name,
+					value: form.company_id,
+			  }
+			: form.company_id
+			? {
+					// Fallback to known label if provided by caller (edit mode) or initial list
+					label:
+						companies.find(c => c.id === form.company_id)?.name ||
+						form.company_name ||
+						'',
+					value: form.company_id,
+			  }
+			: undefined
+
+	// Precompute options outside of JSX to avoid calling hooks conditionally
+	const mergedCompanyOptions = useMemo(
+		() =>
+			Array.from(mergedCompanyMap.values()).map(c => ({
+				label: c.name,
+				value: c.id,
+			})),
+		[mergedCompanyMap]
+	)
+
 	return (
 		<CustomModal
 			isOpen={isOpen}
@@ -80,17 +154,10 @@ export default function UnitQuickModal({
 					<CustomAutocomplete<string>
 						label='Company'
 						required
-						value={
-							form.company_id
-								? {
-										label:
-											companies.find(c => c.id === form.company_id)?.name || '',
-										value: form.company_id,
-								  }
-								: undefined
-						}
+						value={currentCompanyValue}
 						onChange={opt => onChange({ company_id: opt.value })}
-						options={companies.map(c => ({ label: c.name, value: c.id }))}
+						options={mergedCompanyOptions}
+						onQueryChange={q => setCompanyQuery(q)}
 						placeholder='Select company'
 					/>
 				) : null}

@@ -12,7 +12,7 @@ import {
 	startOfWeek,
 } from 'date-fns'
 import { enUS } from 'date-fns/locale'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
 	Calendar as BigCalendar,
 	Views,
@@ -28,6 +28,8 @@ import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { api } from '../api/client'
 import CalendarMenuDropdown from '../components/calendar/CalendarMenuDropdown'
+import CalendarReady from '../components/calendar/CalendarReady'
+import CalendarWaitingList from '../components/calendar/CalendarWaitingList'
 import FullWidthModal from '../components/calendar/FullWidthModal'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
@@ -121,6 +123,32 @@ function CalendarPage() {
 	const [filterCompany, setFilterCompany] = useState<string>('')
 	const queryClient = useQueryClient()
 	const range = useMemo(() => computeRange(date, view), [date, view])
+	// measure available side widths (left/right of the main calendar card)
+	const containerRef = useRef<HTMLDivElement | null>(null)
+	const [sideLeftWidth, setSideLeftWidth] = useState(0)
+	const [sideRightWidth, setSideRightWidth] = useState(0)
+	useEffect(() => {
+		const measure = () => {
+			const el = containerRef.current
+			if (!el) return
+			const rect = el.getBoundingClientRect()
+			// account for main horizontal padding (px-4 -> 16px) so panels don't overlap shadows
+			const pad = 16
+			const left = Math.max(rect.left - pad, 0)
+			const right = Math.max(window.innerWidth - rect.right - pad, 0)
+			setSideLeftWidth(left)
+			setSideRightWidth(right)
+		}
+		measure()
+		window.addEventListener('resize', measure)
+		window.addEventListener('scroll', measure, {
+			passive: true,
+		} as AddEventListenerOptions)
+		return () => {
+			window.removeEventListener('resize', measure)
+			window.removeEventListener('scroll', measure as EventListener)
+		}
+	}, [])
 
 	// removed local text filters (now using dropdown filters)
 	const baysQuery = useQuery({
@@ -404,7 +432,72 @@ function CalendarPage() {
 				</div>
 			</div>
 
-			<section className='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+			{/* Fixed side panels outside the main container width */}
+			<div
+				className='fixed left-0 top-34 z-20'
+				style={{
+					width: sideLeftWidth > 40 ? sideLeftWidth : 0,
+					display: sideLeftWidth > 40 ? 'block' : 'none',
+				}}
+			>
+				<CalendarReady
+					from={range.from}
+					to={range.to}
+					onSelect={b => {
+						setEditingId(b.id)
+						setForm(prev => ({
+							...prev,
+							complaint: b.complaint || '',
+							description: b.description,
+							vehicle_id: b.vehicle_id,
+							company_id: b.company_id,
+							fullbay_service_id: b.fullbay_service_id || '',
+							technician_ids: b.technician_ids || [],
+							bay_id: b.bay_id,
+							start: formatForInput(new Date(b.start)),
+							end: b.end ? formatForInput(new Date(b.end)) : '',
+							status: b.status,
+							notes: b.notes,
+						}))
+						setModalOpen(true)
+					}}
+				/>
+			</div>
+			<div
+				className='fixed right-0 top-34 z-20'
+				style={{
+					width: sideRightWidth > 40 ? sideRightWidth : 0,
+					display: sideRightWidth > 40 ? 'block' : 'none',
+				}}
+			>
+				<CalendarWaitingList
+					from={range.from}
+					to={range.to}
+					onSelect={b => {
+						setEditingId(b.id)
+						setForm(prev => ({
+							...prev,
+							complaint: b.complaint || '',
+							description: b.description,
+							vehicle_id: b.vehicle_id,
+							company_id: b.company_id,
+							fullbay_service_id: b.fullbay_service_id || '',
+							technician_ids: b.technician_ids || [],
+							bay_id: b.bay_id,
+							start: formatForInput(new Date(b.start)),
+							end: b.end ? formatForInput(new Date(b.end)) : '',
+							status: b.status,
+							notes: b.notes,
+						}))
+						setModalOpen(true)
+					}}
+				/>
+			</div>
+
+			<section
+				ref={containerRef}
+				className='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'
+			>
 				<div className='flex items-center justify-between'>
 					<div>
 						<h2 className='text-sm font-semibold text-slate-900'>
@@ -548,7 +641,6 @@ function CalendarPage() {
 								setMoreState({ open: true, events: evts, rect, date: _date })
 							}) as unknown as (events: RBCEvent[], date: Date) => void
 						}
-						// Hide the built-in overlay popup via a null component
 					/>
 					<CalendarMenuDropdown
 						open={moreState.open}
@@ -590,8 +682,8 @@ function CalendarPage() {
 					label:
 						(v.plate || v.vin || `${v.make} ${v.model}`) +
 						(v.company_name ? ` (${v.company_name})` : ''),
-					company_id: (v as any).company_id,
-					company_name: (v as any).company_name,
+					company_id: v.company_id,
+					company_name: v.company_name,
 				}))}
 				bays={(baysQuery.data ?? []).map(b => ({ id: b.id, label: b.name }))}
 				companies={(companiesQuery.data ?? []).map(c => ({

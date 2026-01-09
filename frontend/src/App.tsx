@@ -63,13 +63,15 @@ function WsBridge() {
 						client.invalidateQueries({ queryKey: ['agenda'] })
 						client.invalidateQueries({ queryKey: ['bookings'] })
 						client.invalidateQueries({ queryKey: ['bay-occupancy'] })
+						client.invalidateQueries({ queryKey: ['calendar-ready'] })
+						client.invalidateQueries({ queryKey: ['calendar-waiting'] })
 					}
 				} catch {
 					/* ignore parse errors */
 				}
 			}
 			ws.onerror = () => {
-				ws?.close()
+				// Do not force-close on error; allow onclose to handle reconnect
 			}
 			ws.onclose = () => {
 				retry = window.setTimeout(connect, 3000)

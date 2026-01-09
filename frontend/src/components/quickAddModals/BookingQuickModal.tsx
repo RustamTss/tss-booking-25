@@ -321,7 +321,7 @@ export default function BookingQuickModal({
 				<div className='grid grid-cols-2 gap-3'>
 					<MultiAutocomplete<string>
 						label='Technicians'
-						value={form.technician_ids.map(id => ({
+						value={(form.technician_ids || []).map(id => ({
 							label: technicians.find(t => t.id === id)?.label || '',
 							value: id,
 						}))}

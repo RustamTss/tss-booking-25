@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -11,6 +13,19 @@ import (
 
 func Register(app *fiber.App, h *handlers.Handler) {
 	app.Use(logger.New())
+	// Register WebSocket endpoint before CORS and allow dev origins
+	app.Get("/ws", h.WSUpgrade, websocket.New(
+		h.WSSocket,
+		websocket.Config{
+			HandshakeTimeout: 5 * time.Second,
+			Origins: []string{
+				"http://localhost:5190",
+				"http://localhost:5173",
+				"http://127.0.0.1:5173",
+				"http://localhost:3000",
+			},
+		},
+	))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     "https://bookings.tsstruckservice.com,http://bookings.tsstruckservice.com,http://167.71.168.200,http://localhost:5190,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
 		AllowHeaders:     "Authorization,Content-Type",
@@ -28,7 +43,6 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	app.Get("/auth/users/:id/logs", h.AuthMiddleware(models.RoleAdmin), h.ListUserLogs)
 	app.Get("/auth/me", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.Me)
 	app.Post("/debug/seed-admin", h.SeedAdmin)
-	app.Get("/ws", h.WSUpgrade, websocket.New(h.WSSocket))
 
 	api := app.Group("/api", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice))
 
@@ -71,6 +85,9 @@ func Register(app *fiber.App, h *handlers.Handler) {
 
 	api.Get("/bookings", h.ListBookings)
 	api.Get("/bookings/agenda", h.Agenda)
+	// Side panels on calendar view
+	api.Get("/bookings/ready", h.ReadyBookings)
+	api.Get("/bookings/waitinglist", h.WaitingListBookings)
 	api.Get("/bookings/:id", h.GetBooking)
 	// Bookings: only Admin can delete; others allowed for Office
 	api.Post("/bookings", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.CreateBooking)

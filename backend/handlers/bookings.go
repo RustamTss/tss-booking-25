@@ -307,12 +307,15 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 		}
 	}
 
-	existing, err := h.findConflictingBookings(c, booking.BayID)
-	if err != nil {
-		return fiber.ErrInternalServerError
-	}
-	if err := services.ValidateBookingConflict(booking, existing, 1); err != nil {
-		return fiber.NewError(fiber.StatusConflict, err.Error())
+	// Skip conflict validation for the special "WaitingList" bay
+	if wlID, ok := h.findWaitingListBayID(c); !ok || wlID != booking.BayID {
+		existing, err := h.findConflictingBookings(c, booking.BayID)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		if err := services.ValidateBookingConflict(booking, existing, 1); err != nil {
+			return fiber.NewError(fiber.StatusConflict, err.Error())
+		}
 	}
 
 	if _, err := h.DB.Collection(bookingCollection).InsertOne(h.ctx(c), booking); err != nil {
@@ -444,18 +447,21 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 	updatedBooking.Notes = req.Notes
 	updatedBooking.UpdatedAt = h.now()
 
-	conflicts, err := h.findConflictingBookings(c, updatedBooking.BayID)
-	if err != nil {
-		return fiber.ErrInternalServerError
-	}
-	filtered := make([]models.Booking, 0, len(conflicts))
-	for _, b := range conflicts {
-		if b.ID != id {
-			filtered = append(filtered, b)
+	// Skip conflict validation if updating to the special "WaitingList" bay
+	if wlID, ok := h.findWaitingListBayID(c); !ok || wlID != updatedBooking.BayID {
+		conflicts, err := h.findConflictingBookings(c, updatedBooking.BayID)
+		if err != nil {
+			return fiber.ErrInternalServerError
 		}
-	}
-	if err := services.ValidateBookingConflict(updatedBooking, filtered, 1); err != nil {
-		return fiber.NewError(fiber.StatusConflict, err.Error())
+		filtered := make([]models.Booking, 0, len(conflicts))
+		for _, b := range conflicts {
+			if b.ID != id {
+				filtered = append(filtered, b)
+			}
+		}
+		if err := services.ValidateBookingConflict(updatedBooking, filtered, 1); err != nil {
+			return fiber.NewError(fiber.StatusConflict, err.Error())
+		}
 	}
 
 	update := bson.M{
@@ -1052,10 +1058,10 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 	}
 	// Be tolerant to fractional seconds: try RFC3339 then RFC3339Nano
 	parse := func(s string) (time.Time, error) {
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			return t, nil
 		}
-		return time.Parse(time.RFC3339Nano, s)
+		return time.Parse(time.RFC3339, s)
 	}
 	fromTime, err := parse(from)
 	if err != nil {
@@ -1074,6 +1080,10 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 			{"end": bson.M{"$exists": false}},
 		},
 	}
+	// Exclude the special WaitingList bay from calendar agenda
+	if wlID, ok := h.findWaitingListBayID(c); ok {
+		filter["bay_id"] = bson.M{"$ne": wlID}
+	}
 	cur, err := h.DB.Collection(bookingCollection).Find(h.ctx(c), filter)
 	if err != nil {
 		return fiber.ErrInternalServerError
@@ -1081,6 +1091,87 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 	defer cur.Close(h.ctx(c))
 
 	items := make([]models.Booking, 0)
+	if err := cur.All(h.ctx(c), &items); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(items)
+}
+
+// ReadyBookings returns bookings that were completed (status=closed) within the provided time range.
+// We consider bookings "ready" if their end timestamp falls within [from, to).
+func (h *Handler) ReadyBookings(c *fiber.Ctx) error {
+	from := c.Query("from")
+	to := c.Query("to")
+	if from == "" || to == "" {
+		return fiber.ErrBadRequest
+	}
+	parse := func(s string) (time.Time, error) {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t, nil
+		}
+		return time.Parse(time.RFC3339, s)
+	}
+	fromTime, err := parse(from)
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	toTime, err := parse(to)
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	filter := bson.M{
+		"status": models.BookingClosed,
+		"end": bson.M{
+			"$gte": fromTime,
+			"$lt":  toTime,
+		},
+	}
+	cur, err := h.DB.Collection(bookingCollection).Find(h.ctx(c), filter, options.Find().SetSort(bson.D{{Key: "end", Value: -1}}))
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	defer cur.Close(h.ctx(c))
+	var items []models.Booking
+	if err := cur.All(h.ctx(c), &items); err != nil {
+		return fiber.ErrInternalServerError
+	}
+	return c.JSON(items)
+}
+
+// WaitingListBookings returns bookings assigned to the special WaitingList bay.
+// These bookings are not shown on the main calendar and are listed separately.
+func (h *Handler) WaitingListBookings(c *fiber.Ctx) error {
+	wlID, ok := h.findWaitingListBayID(c)
+	if !ok {
+		// If there's no WaitingList bay configured, return empty list.
+		return c.JSON([]models.Booking{})
+	}
+	filter := bson.M{
+		"bay_id": wlID,
+		"status": bson.M{"$in": []models.BookingStatus{models.BookingOpen, models.BookingInProgress}},
+	}
+	// Keep optional time filters if provided, but do not require them.
+	if from := c.Query("from"); from != "" {
+		if to := c.Query("to"); to != "" {
+			parse := func(s string) (time.Time, error) {
+				if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+					return t, nil
+				}
+				return time.Parse(time.RFC3339, s)
+			}
+			fromTime, err1 := parse(from)
+			toTime, err2 := parse(to)
+			if err1 == nil && err2 == nil {
+				filter["start"] = bson.M{"$gte": fromTime, "$lt": toTime}
+			}
+		}
+	}
+	cur, err := h.DB.Collection(bookingCollection).Find(h.ctx(c), filter, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}))
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	defer cur.Close(h.ctx(c))
+	var items []models.Booking
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -1097,4 +1188,17 @@ func (h *Handler) loadBay(c *fiber.Ctx, bayID primitive.ObjectID) (models.Bay, e
 		return bay, fiber.ErrInternalServerError
 	}
 	return bay, nil
+}
+
+// findWaitingListBayID returns the ObjectID of the bay with key "WaitingList" if present.
+func (h *Handler) findWaitingListBayID(c *fiber.Ctx) (primitive.ObjectID, bool) {
+	var doc struct {
+		ID  primitive.ObjectID `bson:"_id"`
+		Key string             `bson:"key"`
+	}
+	err := h.DB.Collection(bayCollection).FindOne(h.ctx(c), bson.M{"key": "WaitingList"}).Decode(&doc)
+	if err != nil {
+		return primitive.NilObjectID, false
+	}
+	return doc.ID, true
 }
