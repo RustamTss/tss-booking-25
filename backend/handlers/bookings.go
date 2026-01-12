@@ -32,6 +32,85 @@ type bookingRequest struct {
 	Notes            string               `json:"notes"`
 }
 
+// bookingOut adds denormalized labels for UI convenience
+type bookingOut struct {
+	models.Booking `bson:",inline" json:",inline"`
+	UnitLabel      string `json:"unit_label,omitempty"`
+	CompanyName    string `json:"company_name,omitempty"`
+	BayName        string `json:"bay_name,omitempty"`
+}
+
+// enrichBookings resolves unit (plate/nickname/VIN), company and bay names.
+func (h *Handler) enrichBookings(c *fiber.Ctx, items []models.Booking) []bookingOut {
+	if len(items) == 0 {
+		return []bookingOut{}
+	}
+	vehicleIDs := make([]primitive.ObjectID, 0, len(items))
+	bayIDs := make([]primitive.ObjectID, 0, len(items))
+	companyIDSet := map[primitive.ObjectID]struct{}{}
+	for _, b := range items {
+		vehicleIDs = append(vehicleIDs, b.VehicleID)
+		bayIDs = append(bayIDs, b.BayID)
+		if b.CompanyID != primitive.NilObjectID {
+			companyIDSet[b.CompanyID] = struct{}{}
+		}
+	}
+	companyIDs := make([]primitive.ObjectID, 0, len(companyIDSet))
+	for id := range companyIDSet {
+		companyIDs = append(companyIDs, id)
+	}
+	vehicleLabels := map[primitive.ObjectID]string{}
+	if len(vehicleIDs) > 0 {
+		cur, _ := h.DB.Collection(vehicleCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": vehicleIDs}})
+		defer cur.Close(h.ctx(c))
+		for cur.Next(h.ctx(c)) {
+			var v models.Vehicle
+			if err := cur.Decode(&v); err == nil {
+				label := v.Plate
+				if label == "" {
+					label = v.Nickname
+				}
+				if label == "" {
+					label = v.VIN
+				}
+				vehicleLabels[v.ID] = label
+			}
+		}
+	}
+	bayNames := map[primitive.ObjectID]string{}
+	if len(bayIDs) > 0 {
+		cur, _ := h.DB.Collection(bayCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": bayIDs}})
+		defer cur.Close(h.ctx(c))
+		for cur.Next(h.ctx(c)) {
+			var b models.Bay
+			if err := cur.Decode(&b); err == nil {
+				bayNames[b.ID] = b.Name
+			}
+		}
+	}
+	companyNames := map[primitive.ObjectID]string{}
+	if len(companyIDs) > 0 {
+		cur, _ := h.DB.Collection(companyCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": companyIDs}})
+		defer cur.Close(h.ctx(c))
+		for cur.Next(h.ctx(c)) {
+			var comp models.Company
+			if err := cur.Decode(&comp); err == nil {
+				companyNames[comp.ID] = comp.Name
+			}
+		}
+	}
+	out := make([]bookingOut, 0, len(items))
+	for _, b := range items {
+		out = append(out, bookingOut{
+			Booking:     b,
+			UnitLabel:   vehicleLabels[b.VehicleID],
+			CompanyName: companyNames[b.CompanyID],
+			BayName:     bayNames[b.BayID],
+		})
+	}
+	return out
+}
+
 func parseObjectIDs(values []string) ([]primitive.ObjectID, error) {
 	var ids []primitive.ObjectID
 	for _, v := range values {
@@ -78,10 +157,22 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid technician_id")
 		}
 	}
+	limit := int64(c.QueryInt("limit", 50))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	page := int64(c.QueryInt("page", 1))
+	if page <= 0 {
+		page = 1
+	}
+	skip := (page - 1) * limit
 	cur, err := h.DB.Collection(bookingCollection).Find(
 		h.ctx(c),
 		filter,
-		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}),
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit).SetSkip(skip),
 	)
 	if err != nil {
 		return fiber.ErrInternalServerError
@@ -212,7 +303,28 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"bookings-%d.csv\"", time.Now().Unix()))
 		return c.Send(buf.Bytes())
 	}
-	return c.JSON(items)
+	// Enrich with labels
+	out := h.enrichBookings(c, items)
+	// Envelope or legacy array
+	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
+		total, err := h.DB.Collection(bookingCollection).CountDocuments(h.ctx(c), filter)
+		if err != nil && err != mongo.ErrNoDocuments {
+			return fiber.ErrInternalServerError
+		}
+		totalPages := (total + limit - 1) / limit
+		return c.JSON(fiber.Map{
+			"data": out,
+			"pagination": fiber.Map{
+				"total":       total,
+				"page":        page,
+				"limit":       limit,
+				"totalPages":  totalPages,
+				"hasNextPage": page < totalPages,
+				"hasPrevPage": page > 1,
+			},
+		})
+	}
+	return c.JSON(out)
 }
 
 func (h *Handler) GetBooking(c *fiber.Ctx) error {
@@ -226,6 +338,10 @@ func (h *Handler) GetBooking(c *fiber.Ctx) error {
 			return fiber.ErrNotFound
 		}
 		return fiber.ErrInternalServerError
+	}
+	out := h.enrichBookings(c, []models.Booking{b})
+	if len(out) == 1 {
+		return c.JSON(out[0])
 	}
 	return c.JSON(b)
 }
@@ -679,6 +795,55 @@ func (h *Handler) CloseBooking(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+// GoneBooking marks a booking as gone (the truck has departed).
+// It preserves the existing end time (set when marked ready/closed), and only updates status and updated_at.
+func (h *Handler) GoneBooking(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	// load booking for telegram details
+	var b models.Booking
+	if err := h.DB.Collection(bookingCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&b); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+	now := h.now()
+	update := bson.M{"$set": bson.M{"status": models.BookingGone, "updated_at": now}}
+	res, err := h.DB.Collection(bookingCollection).UpdateByID(h.ctx(c), id, update)
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if res.MatchedCount == 0 {
+		return fiber.ErrNotFound
+	}
+	pushRealtime(models.RealtimeEvent{Type: "booking.gone", Data: id.Hex()})
+	b.Status = models.BookingGone
+	data := h.buildTelegramData(c, b)
+	_ = h.Telegram.Notify(h.renderTelegramFallback("gone", b, data))
+	// audit
+	{
+		var actor primitive.ObjectID
+		if uid := getUserID(c); uid != "" {
+			if id2, err := primitive.ObjectIDFromHex(uid); err == nil {
+				actor = id2
+			}
+		}
+		_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+			ID:        primitive.NewObjectID(),
+			Action:    "booking.gone",
+			Entity:    "booking",
+			EntityID:  id,
+			UserID:    actor,
+			Meta:      bson.M{},
+			CreatedAt: h.now(),
+		})
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 func (h *Handler) DeleteBooking(c *fiber.Ctx) error {
 	id, err := asObjectID(c.Params("id"))
 	if err != nil {
@@ -812,6 +977,12 @@ func (h *Handler) renderTelegramFallback(kind string, b models.Booking, data map
 	case "closed":
 		icon = "✅"
 		title = "Booking ready"
+	case "gone":
+		icon = "🚚"
+		title = "Truck gone"
+	case "request":
+		icon = "📨"
+		title = "New service request"
 	}
 	// Dates formatted like UI
 	const pretty = "01/02/2006, 03:04 PM"
@@ -1094,7 +1265,7 @@ func (h *Handler) Agenda(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(items)
+	return c.JSON(h.enrichBookings(c, items))
 }
 
 // ReadyBookings returns bookings that were completed (status=closed) within the provided time range.
@@ -1135,7 +1306,7 @@ func (h *Handler) ReadyBookings(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(items)
+	return c.JSON(h.enrichBookings(c, items))
 }
 
 // WaitingListBookings returns bookings assigned to the special WaitingList bay.
@@ -1175,7 +1346,7 @@ func (h *Handler) WaitingListBookings(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(items)
+	return c.JSON(h.enrichBookings(c, items))
 }
 
 func (h *Handler) loadBay(c *fiber.Ctx, bayID primitive.ObjectID) (models.Bay, error) {

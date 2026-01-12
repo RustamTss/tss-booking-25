@@ -1,7 +1,7 @@
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import CompanyQuickModal from '../components/quickAddModals/CompanyQuickModal'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
@@ -9,7 +9,8 @@ import ConfirmDeleteModal from '../components/shared/ui/ConfirmDeleteModal'
 import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
-import type { Company } from '../types'
+import useDebounce from '../hooks/useDebounce'
+import type { Company, ListResponse } from '../types'
 
 function CompaniesPage() {
 	const qc = useQueryClient()
@@ -19,10 +20,39 @@ function CompaniesPage() {
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 	const [form, setForm] = useState({ name: '', contact: '', phone: '' })
 
-	const listQuery = useQuery({
-		queryKey: ['companies'],
-		queryFn: async () => (await api.get<Company[]>('/api/companies')).data,
+	const [search, setSearch] = useSearchParams()
+	const page = Math.max(1, Number(search.get('companies_page') ?? 1))
+	const limit = Math.max(1, Number(search.get('companies_limit') ?? 10))
+	const qRaw = search.get('companies_q') ?? ''
+	const q = useDebounce(qRaw, 300)
+
+	const listQuery = useQuery<ListResponse<Company>>({
+		queryKey: ['companies', page, limit, q],
+		queryFn: async () =>
+			(
+				await api.get<ListResponse<Company>>('/api/companies', {
+					params: { envelope: 1, page, limit, q },
+				})
+			).data,
 	})
+
+	const handleSetPage = (p: number) => {
+		const next = new URLSearchParams(search)
+		next.set('companies_page', String(p))
+		setSearch(next, { replace: true })
+	}
+	const handleSetLimit = (l: number) => {
+		const next = new URLSearchParams(search)
+		next.set('companies_limit', String(l))
+		next.set('companies_page', '1')
+		setSearch(next, { replace: true })
+	}
+	const handleSetQ = (value: string) => {
+		const next = new URLSearchParams(search)
+		next.set('companies_q', value)
+		next.set('companies_page', '1')
+		setSearch(next, { replace: true })
+	}
 
 	const createMutation = useMutation({
 		mutationFn: async () => api.post('/api/companies', form),
@@ -119,13 +149,37 @@ function CompaniesPage() {
 				<h1 className='text-xl font-semibold text-slate-900'>
 					Companies / clients
 				</h1>
-				<CreateButton onClick={openCreate}>Create Company</CreateButton>
+				<div className='flex items-center gap-2'>
+					<input
+						type='text'
+						value={qRaw}
+						onChange={e => handleSetQ(e.target.value)}
+						placeholder='Search companies...'
+						className='w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
+					/>
+					<CreateButton onClick={openCreate}>Create Company</CreateButton>
+				</div>
 			</div>
 
 			<CustomTable
 				columns={columns}
-				data={listQuery.data ?? []}
+				data={listQuery.data?.data ?? []}
+				pagination
 				pageParamKey='companies'
+				serverPagination={
+					listQuery.data?.pagination
+						? {
+								total: listQuery.data.pagination.total,
+								page: listQuery.data.pagination.page,
+								limit: listQuery.data.pagination.limit,
+								totalPages: listQuery.data.pagination.totalPages,
+								hasNextPage: listQuery.data.pagination.hasNextPage,
+								hasPrevPage: listQuery.data.pagination.hasPrevPage,
+								onPageChange: handleSetPage,
+								onLimitChange: handleSetLimit,
+						  }
+						: undefined
+				}
 			/>
 
 			<CompanyQuickModal

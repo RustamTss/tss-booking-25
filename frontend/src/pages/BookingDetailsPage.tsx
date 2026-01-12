@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from 'react-router-dom'
+import { NavLink, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import CustomDetailsPage from '../components/shared/layout/CustomDetailsPage'
@@ -47,13 +47,18 @@ export default function BookingDetailsPage() {
 	const b = bookingQuery.data
 	if (!b) return <p className='text-sm text-rose-600'>Booking not found</p>
 
-	const vehicleLabel = (() => {
-		const v = (vehiclesQuery.data ?? []).find(x => x.id === b.vehicle_id)
-		return v?.plate || v?.vin || b.vehicle_id
-	})()
+	const vehicleLabel =
+		b.unit_label ||
+		(() => {
+			const v = (vehiclesQuery.data ?? []).find(x => x.id === b.vehicle_id)
+			return v?.plate || v?.vin || b.vehicle_id
+		})()
 	const bayName =
-		(baysQuery.data ?? []).find(x => x.id === b.bay_id)?.name || b.bay_id
+		b.bay_name ||
+		(baysQuery.data ?? []).find(x => x.id === b.bay_id)?.name ||
+		b.bay_id
 	const companyName =
+		b.company_name ||
 		(companiesQuery.data ?? []).find(x => x.id === b.company_id)?.name ||
 		b.company_id
 	const techNames = (b.technician_ids || [])
@@ -65,9 +70,31 @@ export default function BookingDetailsPage() {
 		{ label: 'Number', value: b.number || b.id.slice(0, 6) },
 		{ label: 'Complaint', value: b.complaint || '—' },
 		{ label: 'Description', value: b.description || '—' },
-		{ label: 'Unit', value: vehicleLabel },
+		{
+			label: 'Unit',
+			value: (
+				<NavLink
+					to={`/vehicles/${b.vehicle_id}`}
+					className='text-sky-600 underline'
+				>
+					{vehicleLabel}
+				</NavLink>
+			),
+		},
 		{ label: 'Bay', value: bayName },
-		{ label: 'Company', value: companyName || '—' },
+		{
+			label: 'Company',
+			value: b.company_id ? (
+				<NavLink
+					to={`/companies/${b.company_id}`}
+					className='text-sky-600 underline'
+				>
+					{companyName}
+				</NavLink>
+			) : (
+				'—'
+			),
+		},
 		{ label: 'Technicians', value: techNames || '—' },
 		{ label: 'Start', value: new Date(b.start).toLocaleString() },
 		{ label: 'End', value: b.end ? new Date(b.end).toLocaleString() : '—' },

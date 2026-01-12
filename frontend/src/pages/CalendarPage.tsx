@@ -291,8 +291,6 @@ function CalendarPage() {
 
 	const events = useMemo<RBCEvent[]>(() => {
 		if (!data) return []
-		const vehicles = vehiclesQuery.data ?? []
-		const bays = baysQuery.data ?? []
 		const techs = techsQuery.data ?? []
 
 		return data
@@ -304,9 +302,8 @@ function CalendarPage() {
 				filterTech ? item.technician_ids?.includes(filterTech) : true
 			)
 			.map(item => {
-				const v = vehicles.find(v => v.id === item.vehicle_id)
-				const plate = v?.plate || v?.vin || ''
-				const bay = bays.find(b => b.id === item.bay_id)?.name || ''
+				const plate = item.unit_label || ''
+				const bay = item.bay_name || ''
 				const techNames = (item.technician_ids || [])
 					.map(id => techs.find(t => t.id === id)?.name)
 					.filter(Boolean)
@@ -321,15 +318,7 @@ function CalendarPage() {
 					resource: item,
 				} as RBCEvent
 			})
-	}, [
-		data,
-		vehiclesQuery.data,
-		baysQuery.data,
-		techsQuery.data,
-		filterBay,
-		filterTech,
-		filterCompany,
-	])
+	}, [data, techsQuery.data, filterBay, filterTech, filterCompany])
 
 	// Event appearance (Google Calendar-like)
 	const eventPropGetter: NonNullable<
@@ -466,7 +455,7 @@ function CalendarPage() {
 			<div
 				className='fixed right-0 top-34 z-20'
 				style={{
-					width: sideRightWidth > 40 ? sideRightWidth : 0,
+					width: sideRightWidth > 40 ? Math.min(sideRightWidth, 200) : 0,
 					display: sideRightWidth > 40 ? 'block' : 'none',
 				}}
 			>

@@ -46,6 +46,9 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	app.Get("/auth/me", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.Me)
 	app.Post("/debug/seed-admin", h.SeedAdmin)
 
+	// Public webhook endpoint (secured via token)
+	app.Post("/webhooks/telegram/request", h.RequestWebhook)
+
 	api := app.Group("/api", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice))
 
 	api.Get("/dashboard/summary", h.DashboardSummary)
@@ -96,8 +99,13 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	api.Put("/bookings/:id", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.UpdateBooking)
 	api.Put("/bookings/:id/cancel", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.CancelBooking)
 	api.Put("/bookings/:id/close", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.CloseBooking)
+	api.Put("/bookings/:id/gone", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.GoneBooking)
 	api.Delete("/bookings/:id", h.AuthMiddleware(models.RoleAdmin), h.DeleteBooking)
 	api.Get("/bookings/:id/logs", h.ListBookingLogs)
+
+	// Requests
+	api.Get("/requests", h.ListRequests)
+	api.Put("/requests/:id", h.UpdateRequest)
 
 	api.Get("/settings/telegram", h.AuthMiddleware(models.RoleAdmin), h.GetTelegramSettings)
 	api.Put("/settings/telegram", h.AuthMiddleware(models.RoleAdmin), h.SaveTelegramSettings)

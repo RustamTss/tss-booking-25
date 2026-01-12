@@ -20,6 +20,16 @@ const (
 	BookingInProgress BookingStatus = "in_progress"
 	BookingClosed     BookingStatus = "closed"
 	BookingCanceled   BookingStatus = "canceled"
+	BookingGone       BookingStatus = "gone"
+)
+
+type RequestStatus string
+
+const (
+	RequestNew      RequestStatus = "new"
+	RequestInReview RequestStatus = "in_review"
+	RequestApproved RequestStatus = "approved"
+	RequestRejected RequestStatus = "rejected"
 )
 
 type User struct {
@@ -109,6 +119,19 @@ type Booking struct {
 	CreatedBy        primitive.ObjectID   `bson:"created_by" json:"created_by"`
 	CreatedAt        time.Time            `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time            `bson:"updated_at" json:"updated_at"`
+}
+
+type Request struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	CompanyName string             `bson:"company_name" json:"company_name"`
+	DriverName  string             `bson:"driver_name" json:"driver_name"`
+	Phone       string             `bson:"phone" json:"phone"`
+	UnitNumber  string             `bson:"unit_number" json:"unit_number"`
+	StartAt     time.Time          `bson:"start_at" json:"start_at"`
+	Status      RequestStatus      `bson:"status" json:"status"`
+	Source      string             `bson:"source,omitempty" json:"source,omitempty"`
+	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type AuditLog struct {

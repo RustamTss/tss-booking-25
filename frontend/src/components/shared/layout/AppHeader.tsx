@@ -1,6 +1,7 @@
 import { Menu, Transition } from '@headlessui/react'
 import {
 	ArrowRightOnRectangleIcon,
+	BellIcon,
 	BuildingOffice2Icon,
 	BuildingOfficeIcon,
 	ChevronDownIcon,
@@ -8,8 +9,10 @@ import {
 	UserGroupIcon,
 	UserIcon,
 } from '@heroicons/react/24/outline'
+import { useQuery } from '@tanstack/react-query'
 import { Fragment } from 'react'
 import { Link, NavLink } from 'react-router-dom'
+import { api } from '../../../api/client'
 import { useAuth } from '../../../context/AuthContext'
 import { useToast } from '../ui/ToastProvider'
 
@@ -19,6 +22,15 @@ const navLinkClass =
 export default function AppHeader() {
 	const { logout, role } = useAuth()
 	const { success } = useToast()
+	const newReqs = useQuery({
+		queryKey: ['requests-new-count'],
+		queryFn: async () => {
+			const res = await api.get('/api/requests', { params: { status: 'new' } })
+			return Array.isArray(res.data) ? res.data.length : 0
+		},
+		staleTime: 30_000,
+		refetchInterval: 60_000,
+	})
 	return (
 		<header className='border-b bg-white'>
 			<div className='mx-auto flex max-w-6xl items-center justify-between px-4 py-3'>
@@ -38,6 +50,13 @@ export default function AppHeader() {
 						aria-label='Calendar'
 					>
 						Calendar
+					</NavLink>
+					<NavLink
+						to='/requests'
+						className={navLinkClass}
+						aria-label='Requests'
+					>
+						Requests
 					</NavLink>
 					<NavLink
 						to='/bookings'
@@ -149,6 +168,19 @@ export default function AppHeader() {
 					)}
 				</nav>
 				<div className='flex items-center gap-2'>
+					<NavLink
+						to='/requests'
+						className='relative inline-flex items-center justify-center rounded-full p-2 text-slate-700 hover:bg-slate-100'
+						aria-label='Notifications'
+						title='Requests'
+					>
+						<BellIcon className='h-5 w-5' />
+						{(newReqs.data ?? 0) > 0 && (
+							<span className='absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold leading-none text-white'>
+								{newReqs.data}
+							</span>
+						)}
+					</NavLink>
 					<NavLink
 						to='/profile'
 						className='inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100'

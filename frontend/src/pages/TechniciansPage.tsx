@@ -1,7 +1,7 @@
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import TechnicianQuickModal from '../components/quickAddModals/TechnicianQuickModal'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
@@ -9,7 +9,8 @@ import ConfirmDeleteModal from '../components/shared/ui/ConfirmDeleteModal'
 import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
-import type { Technician } from '../types'
+import type { ListResponse, Technician } from '../types'
+import useDebounce from '../hooks/useDebounce'
 
 function TechniciansPage() {
 	const qc = useQueryClient()
@@ -24,10 +25,39 @@ function TechniciansPage() {
 		email: '',
 	})
 
-	const listQuery = useQuery({
-		queryKey: ['technicians'],
-		queryFn: async () => (await api.get<Technician[]>('/api/technicians')).data,
+	const [search, setSearch] = useSearchParams()
+	const page = Math.max(1, Number(search.get('technicians_page') ?? 1))
+	const limit = Math.max(1, Number(search.get('technicians_limit') ?? 10))
+	const qRaw = search.get('technicians_q') ?? ''
+	const q = useDebounce(qRaw, 300)
+
+	const listQuery = useQuery<ListResponse<Technician>>({
+		queryKey: ['technicians', page, limit, q],
+		queryFn: async () =>
+			(
+				await api.get<ListResponse<Technician>>('/api/technicians', {
+					params: { envelope: 1, page, limit, q },
+				})
+			).data,
 	})
+
+	const handleSetPage = (p: number) => {
+		const next = new URLSearchParams(search)
+		next.set('technicians_page', String(p))
+		setSearch(next, { replace: true })
+	}
+	const handleSetLimit = (l: number) => {
+		const next = new URLSearchParams(search)
+		next.set('technicians_limit', String(l))
+		next.set('technicians_page', '1')
+		setSearch(next, { replace: true })
+	}
+	const handleSetQ = (value: string) => {
+		const next = new URLSearchParams(search)
+		next.set('technicians_q', value)
+		next.set('technicians_page', '1')
+		setSearch(next, { replace: true })
+	}
 
 	const createMutation = useMutation({
 		mutationFn: async () =>
@@ -152,13 +182,37 @@ function TechniciansPage() {
 		<div className='space-y-4'>
 			<div className='flex items-center justify-between'>
 				<h1 className='text-xl font-semibold text-slate-900'>Technicians</h1>
-				<CreateButton onClick={openCreate}>Create Technician</CreateButton>
+				<div className='flex items-center gap-2'>
+					<input
+						type='text'
+						value={qRaw}
+						onChange={e => handleSetQ(e.target.value)}
+						placeholder='Search technicians...'
+						className='w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
+					/>
+					<CreateButton onClick={openCreate}>Create Technician</CreateButton>
+				</div>
 			</div>
 
 			<CustomTable
 				columns={columns}
-				data={listQuery.data ?? []}
+				data={listQuery.data?.data ?? []}
+				pagination
 				pageParamKey='technicians'
+				serverPagination={
+					listQuery.data?.pagination
+						? {
+								total: listQuery.data.pagination.total,
+								page: listQuery.data.pagination.page,
+								limit: listQuery.data.pagination.limit,
+								totalPages: listQuery.data.pagination.totalPages,
+								hasNextPage: listQuery.data.pagination.hasNextPage,
+								hasPrevPage: listQuery.data.pagination.hasPrevPage,
+								onPageChange: handleSetPage,
+								onLimitChange: handleSetLimit,
+						  }
+						: undefined
+				}
 			/>
 
 			<TechnicianQuickModal

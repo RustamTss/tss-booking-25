@@ -8,6 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
+	"strings"
 )
 
 const (
@@ -134,8 +135,27 @@ func (h *Handler) CreateUser(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListUsers(c *fiber.Ctx) error {
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	cur, err := h.DB.Collection(userCollection).Find(h.ctx(c), bson.D{}, opts)
+	filter := bson.D{}
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		filter = append(filter, bson.E{Key: "email", Value: bson.M{"$regex": q, "$options": "i"}})
+	}
+	limit := int64(c.QueryInt("limit", 50))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	page := int64(c.QueryInt("page", 1))
+	if page <= 0 {
+		page = 1
+	}
+	skip := (page - 1) * limit
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetLimit(limit).
+		SetSkip(skip)
+	cur, err := h.DB.Collection(userCollection).Find(h.ctx(c), filter, opts)
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
@@ -144,6 +164,24 @@ func (h *Handler) ListUsers(c *fiber.Ctx) error {
 	var users []models.User
 	if err := cur.All(h.ctx(c), &users); err != nil {
 		return fiber.ErrInternalServerError
+	}
+	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
+		total, err := h.DB.Collection(userCollection).CountDocuments(h.ctx(c), filter)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+		totalPages := (total + limit - 1) / limit
+		return c.JSON(fiber.Map{
+			"data": users,
+			"pagination": fiber.Map{
+				"total":        total,
+				"page":         page,
+				"limit":        limit,
+				"totalPages":   totalPages,
+				"hasNextPage":  page < totalPages,
+				"hasPrevPage":  page > 1,
+			},
+		})
 	}
 	return c.JSON(users)
 }

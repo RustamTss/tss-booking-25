@@ -1,7 +1,7 @@
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import BayQuickModal from '../components/quickAddModals/BayQuickModal'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
@@ -10,7 +10,8 @@ import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
 import { useAuth } from '../context/AuthContext'
-import type { Bay } from '../types'
+import type { Bay, ListResponse } from '../types'
+import useDebounce from '../hooks/useDebounce'
 
 function BaysPage() {
 	const qc = useQueryClient()
@@ -21,10 +22,39 @@ function BaysPage() {
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 	const [form, setForm] = useState({ key: '', name: '' })
 
-	const listQuery = useQuery({
-		queryKey: ['bays'],
-		queryFn: async () => (await api.get<Bay[]>('/api/bays')).data,
+	const [search, setSearch] = useSearchParams()
+	const page = Math.max(1, Number(search.get('bays_page') ?? 1))
+	const limit = Math.max(1, Number(search.get('bays_limit') ?? 10))
+	const qRaw = search.get('bays_q') ?? ''
+	const q = useDebounce(qRaw, 300)
+
+	const listQuery = useQuery<ListResponse<Bay>>({
+		queryKey: ['bays', page, limit, q],
+		queryFn: async () =>
+			(
+				await api.get<ListResponse<Bay>>('/api/bays', {
+					params: { envelope: 1, page, limit, q },
+				})
+			).data,
 	})
+
+	const handleSetPage = (p: number) => {
+		const next = new URLSearchParams(search)
+		next.set('bays_page', String(p))
+		setSearch(next, { replace: true })
+	}
+	const handleSetLimit = (l: number) => {
+		const next = new URLSearchParams(search)
+		next.set('bays_limit', String(l))
+		next.set('bays_page', '1')
+		setSearch(next, { replace: true })
+	}
+	const handleSetQ = (value: string) => {
+		const next = new URLSearchParams(search)
+		next.set('bays_q', value)
+		next.set('bays_page', '1')
+		setSearch(next, { replace: true })
+	}
 
 	const createMutation = useMutation({
 		mutationFn: async () =>
@@ -122,15 +152,39 @@ function BaysPage() {
 		<div className='space-y-4'>
 			<div className='flex items-center justify-between'>
 				<h1 className='text-xl font-semibold text-slate-900'>Bays</h1>
-				{role === 'admin' && (
-					<CreateButton onClick={openCreate}>Create Bay</CreateButton>
-				)}
+				<div className='flex items-center gap-2'>
+					<input
+						type='text'
+						value={qRaw}
+						onChange={e => handleSetQ(e.target.value)}
+						placeholder='Search bays...'
+						className='w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
+					/>
+					{role === 'admin' && (
+						<CreateButton onClick={openCreate}>Create Bay</CreateButton>
+					)}
+				</div>
 			</div>
 
 			<CustomTable
 				columns={columns}
-				data={listQuery.data ?? []}
+				data={listQuery.data?.data ?? []}
+				pagination
 				pageParamKey='bays'
+				serverPagination={
+					listQuery.data?.pagination
+						? {
+								total: listQuery.data.pagination.total,
+								page: listQuery.data.pagination.page,
+								limit: listQuery.data.pagination.limit,
+								totalPages: listQuery.data.pagination.totalPages,
+								hasNextPage: listQuery.data.pagination.hasNextPage,
+								hasPrevPage: listQuery.data.pagination.hasPrevPage,
+								onPageChange: handleSetPage,
+								onLimitChange: handleSetLimit,
+						  }
+						: undefined
+				}
 			/>
 
 			{role === 'admin' && (

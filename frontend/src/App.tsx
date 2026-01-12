@@ -13,7 +13,7 @@ import {
 	Routes,
 } from 'react-router-dom'
 import AppHeader from './components/shared/layout/AppHeader.tsx'
-import { ToastProvider } from './components/shared/ui/ToastProvider'
+import { ToastProvider, useToast } from './components/shared/ui/ToastProvider'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import BayDetailsPage from './pages/BayDetailsPage'
 import BaysPage from './pages/BaysPage'
@@ -26,6 +26,7 @@ import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import LogsPage from './pages/LogsPage'
 import ProfilePage from './pages/ProfilePage.tsx'
+import RequestsPage from './pages/RequestsPage'
 import SettingsPage from './pages/SettingsPage'
 import TechnicianDetailsPage from './pages/TechnicianDetailsPage'
 import TechniciansPage from './pages/TechniciansPage'
@@ -38,6 +39,7 @@ const queryClient = new QueryClient()
 
 function WsBridge() {
 	const client = useQueryClient()
+	const { success } = useToast()
 	const wsUrl = useMemo(() => {
 		const api = import.meta.env.VITE_API_URL ?? 'http://localhost:8090'
 		try {
@@ -66,6 +68,20 @@ function WsBridge() {
 						client.invalidateQueries({ queryKey: ['calendar-ready'] })
 						client.invalidateQueries({ queryKey: ['calendar-waiting'] })
 					}
+					if (msg?.type?.startsWith('request.')) {
+						client.invalidateQueries({ queryKey: ['requests'] })
+						client.invalidateQueries({ queryKey: ['requests-new-count'] })
+						const r = msg?.data
+						if (r && r.company_name) {
+							success(
+								`New request: ${r.company_name}${
+									r.unit_number ? ' • ' + r.unit_number : ''
+								}`
+							)
+						} else {
+							success('New request received')
+						}
+					}
 				} catch {
 					/* ignore parse errors */
 				}
@@ -79,13 +95,15 @@ function WsBridge() {
 		}
 
 		connect()
+		// Trigger header count fetch on load without showing a toast
+		client.invalidateQueries({ queryKey: ['requests-new-count'] })
 		return () => {
 			if (retry) {
 				clearTimeout(retry)
 			}
 			ws?.close()
 		}
-	}, [client, wsUrl])
+	}, [client, wsUrl, success])
 
 	return null
 }
@@ -110,8 +128,8 @@ function App() {
 	return (
 		<QueryClientProvider client={queryClient}>
 			<AuthProvider>
-				<WsBridge />
 				<ToastProvider>
+					<WsBridge />
 					<BrowserRouter>
 						<Routes>
 							<Route path='/login' element={<LoginPage />} />
@@ -131,6 +149,7 @@ function App() {
 								<Route path='/companies/:id' element={<CompanyDetailsPage />} />
 								<Route path='/vehicles' element={<VehiclesPage />} />
 								<Route path='/vehicles/:id' element={<UnitDetailsPage />} />
+								<Route path='/requests' element={<RequestsPage />} />
 								<Route path='/users' element={<UsersPage />} />
 								<Route path='/users/:id' element={<UserDetailsPage />} />
 								<Route path='/logs' element={<LogsPage />} />

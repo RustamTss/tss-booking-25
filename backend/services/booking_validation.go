@@ -38,7 +38,7 @@ func overlaps(newStart time.Time, newEnd *time.Time, otherStart time.Time, other
 func ValidateBookingConflict(newBooking models.Booking, existing []models.Booking, _ int) error {
 	conflicts := 0
 	for _, b := range existing {
-		if b.Status == models.BookingCanceled || b.Status == models.BookingClosed {
+		if b.Status == models.BookingCanceled || b.Status == models.BookingClosed || b.Status == models.BookingGone {
 			continue
 		}
 		if b.BayID == newBooking.BayID && overlaps(newBooking.Start, newBooking.End, b.Start, b.End) {

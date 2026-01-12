@@ -1,20 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from 'react-router-dom'
+import { NavLink, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import CustomDetailsPage from '../components/shared/layout/CustomDetailsPage'
 import CustomBadge from '../components/shared/ui/CustomBadge'
-import type { AuditLog, Company, Vehicle } from '../types'
+import type { AuditLog, Vehicle } from '../types'
 
 export default function UnitDetailsPage() {
 	const { id } = useParams<{ id: string }>()
 	const unitQuery = useQuery({
 		queryKey: ['vehicle', id],
 		queryFn: async () => (await api.get<Vehicle>(`/api/vehicles/${id}`)).data,
-	})
-	const companiesQuery = useQuery({
-		queryKey: ['companies'],
-		queryFn: async () => (await api.get<Company[]>('/api/companies')).data,
 	})
 	const logsQuery = useQuery({
 		queryKey: ['vehicle-logs', id],
@@ -27,12 +23,20 @@ export default function UnitDetailsPage() {
 		return <p className='text-sm text-slate-600'>Loading...</p>
 	const unit = unitQuery.data
 	if (!unit) return <p className='text-sm text-rose-600'>Unit not found</p>
-	const companyName =
-		(companiesQuery.data ?? []).find(c => c.id === unit.company_id)?.name ||
-		unit.company_id
+	const companyLink =
+		unit.company_id ? (
+			<NavLink
+				to={`/companies/${unit.company_id}`}
+				className='text-sky-600 underline'
+			>
+				{unit.company_name || unit.company_id}
+			</NavLink>
+		) : (
+			'—'
+		)
 
 	const rows = [
-		{ label: 'Company', value: companyName },
+		{ label: 'Company', value: companyLink },
 		{ label: 'Type', value: unit.type.toUpperCase() },
 		{ label: 'VIN', value: unit.vin || '—' },
 		{ label: 'Plate', value: unit.plate || '—' },

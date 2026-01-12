@@ -9,6 +9,17 @@ export type Column<T> = {
 	className?: string
 }
 
+type ServerPaginationControls = {
+	total: number
+	page: number
+	limit: number
+	totalPages: number
+	hasNextPage: boolean
+	hasPrevPage: boolean
+	onPageChange: (page: number) => void
+	onLimitChange: (limit: number) => void
+}
+
 type Props<T> = {
 	columns: Array<Column<T>>
 	data: T[]
@@ -16,6 +27,7 @@ type Props<T> = {
 	emptyText?: string
 	pagination?: boolean
 	pageParamKey?: string
+	serverPagination?: ServerPaginationControls
 }
 
 export default function CustomTable<T extends Record<string, any>>({
@@ -25,12 +37,17 @@ export default function CustomTable<T extends Record<string, any>>({
 	emptyText = 'No data',
 	pagination = true,
 	pageParamKey,
+	serverPagination,
 }: Props<T>) {
 	const [search, setSearch] = useSearchParams()
 	const pageKey = `${pageParamKey ? `${pageParamKey}_` : ''}page`
 	const limitKey = `${pageParamKey ? `${pageParamKey}_` : ''}limit`
-	const limit = Math.max(1, Number(search.get(limitKey) ?? 10))
-	const page = Math.max(1, Number(search.get(pageKey) ?? 1))
+	const limit = serverPagination
+		? serverPagination.limit
+		: Math.max(1, Number(search.get(limitKey) ?? 10))
+	const page = serverPagination
+		? serverPagination.page
+		: Math.max(1, Number(search.get(pageKey) ?? 1))
 
 	const { paged, from, to, total, pages } = useMemo(() => {
 		if (!pagination) {
@@ -40,6 +57,20 @@ export default function CustomTable<T extends Record<string, any>>({
 				to: data.length,
 				total: data.length,
 				pages: 1,
+			}
+		}
+		if (serverPagination) {
+			const total = serverPagination.total
+			const startIndex = (serverPagination.page - 1) * serverPagination.limit
+			const from = total === 0 ? 0 : startIndex + 1
+			const to = startIndex + data.length
+			const pages = Math.max(1, serverPagination.totalPages)
+			return {
+				paged: data,
+				from,
+				to,
+				total,
+				pages,
 			}
 		}
 		const total = data.length
@@ -54,15 +85,24 @@ export default function CustomTable<T extends Record<string, any>>({
 			total,
 			pages,
 		}
-	}, [data, page, limit, pagination])
+	}, [data, page, limit, pagination, serverPagination])
 
 	const setPage = (next: number) => {
+		if (serverPagination) {
+			const p = Math.min(Math.max(1, next), pages)
+			serverPagination.onPageChange(p)
+			return
+		}
 		const p = Math.min(Math.max(1, next), pages)
 		const nextParams = new URLSearchParams(search)
 		nextParams.set(pageKey, String(p))
 		setSearch(nextParams, { replace: true })
 	}
 	const setLimit = (l: number) => {
+		if (serverPagination) {
+			serverPagination.onLimitChange(l)
+			return
+		}
 		const nextParams = new URLSearchParams(search)
 		nextParams.set(limitKey, String(l))
 		nextParams.set(pageKey, '1')
@@ -136,7 +176,7 @@ export default function CustomTable<T extends Record<string, any>>({
 								value={limit}
 								onChange={e => setLimit(Number(e.target.value))}
 							>
-								{[5, 10, 50, 100].map(n => (
+								{[5, 10, 50, 100, 200].map(n => (
 									<option key={n} value={n}>
 										{n}
 									</option>
@@ -148,7 +188,7 @@ export default function CustomTable<T extends Record<string, any>>({
 								type='button'
 								className='rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-40'
 								onClick={() => setPage(page - 1)}
-								disabled={page <= 1}
+								disabled={serverPagination ? !serverPagination.hasPrevPage : page <= 1}
 							>
 								Prev
 							</button>
@@ -159,7 +199,7 @@ export default function CustomTable<T extends Record<string, any>>({
 								type='button'
 								className='rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-40'
 								onClick={() => setPage(page - 0 + 1)}
-								disabled={page >= pages}
+								disabled={serverPagination ? !serverPagination.hasNextPage : page >= pages}
 							>
 								Next
 							</button>

@@ -51,7 +51,12 @@ export interface Vehicle {
 	updated_at: string
 }
 
-export type BookingStatus = 'open' | 'in_progress' | 'closed' | 'canceled'
+export type BookingStatus =
+	| 'open'
+	| 'in_progress'
+	| 'closed'
+	| 'canceled'
+	| 'gone'
 
 export interface Booking {
 	id: string
@@ -60,10 +65,13 @@ export interface Booking {
 	number?: string
 	description: string
 	vehicle_id: string
+	unit_label?: string
 	fullbay_service_id?: string
 	bay_id: string
+	bay_name?: string
 	technician_ids: string[]
 	company_id: string
+	company_name?: string
 	start: string
 	end?: string
 	status: BookingStatus
@@ -109,4 +117,33 @@ export interface User {
 	status: string
 	created_at: string
 	updated_at: string
+}
+
+export type RequestStatus = 'new' | 'in_review' | 'approved' | 'rejected'
+
+export interface Request {
+	id: string
+	company_name: string
+	driver_name: string
+	phone: string
+	unit_number: string
+	start_at: string
+	status: RequestStatus
+	source?: string
+	created_at: string
+	updated_at: string
+}
+
+export type Pagination = {
+	total: number
+	page: number
+	limit: number
+	totalPages: number
+	hasNextPage: boolean
+	hasPrevPage: boolean
+}
+
+export type ListResponse<T> = {
+	data: T[]
+	pagination: Pagination
 }

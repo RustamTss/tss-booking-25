@@ -56,7 +56,10 @@ func (h *Handler) ListVehicles(c *fiber.Ctx) error {
 	}
 	skip := (page - 1) * limit
 	opts := options.Find().
-		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetSort(bson.D{
+			{Key: "created_at", Value: -1},
+			{Key: "_id", Value: -1}, // tiebreaker for stable pagination
+		}).
 		SetLimit(limit).
 		SetSkip(skip)
 	cur, err := h.DB.Collection(vehicleCollection).Find(h.ctx(c), filter, opts)
@@ -104,6 +107,25 @@ func (h *Handler) ListVehicles(c *fiber.Ctx) error {
 			CompanyName: nameByID[v.CompanyID],
 		})
 	}
+	// total for pagination envelope
+	total, err := h.DB.Collection(vehicleCollection).CountDocuments(h.ctx(c), filter)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return fiber.ErrInternalServerError
+	}
+	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
+		totalPages := (total + limit - 1) / limit
+		return c.JSON(fiber.Map{
+			"data": out,
+			"pagination": fiber.Map{
+				"total":       total,
+				"page":        page,
+				"limit":       limit,
+				"totalPages":  totalPages,
+				"hasNextPage": page < totalPages,
+				"hasPrevPage": page > 1,
+			},
+		})
+	}
 	return c.JSON(out)
 }
 
@@ -117,7 +139,19 @@ func (h *Handler) GetVehicle(c *fiber.Ctx) error {
 	if err := h.DB.Collection(vehicleCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&v); err != nil {
 		return fiber.ErrInternalServerError
 	}
-	return c.JSON(v)
+	// Enrich with company name like in list
+	type vehicleOut struct {
+		models.Vehicle `bson:",inline" json:",inline"`
+		CompanyName    string `json:"company_name,omitempty"`
+	}
+	out := vehicleOut{Vehicle: v}
+	if v.CompanyID != primitive.NilObjectID {
+		var comp models.Company
+		if err := h.DB.Collection(companyCollection).FindOne(h.ctx(c), bson.M{"_id": v.CompanyID}).Decode(&comp); err == nil {
+			out.CompanyName = comp.Name
+		}
+	}
+	return c.JSON(out)
 }
 
 func (h *Handler) CreateVehicle(c *fiber.Ctx) error {

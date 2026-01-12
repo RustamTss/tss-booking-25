@@ -8,7 +8,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
@@ -18,7 +18,7 @@ import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
 import { useAuth } from '../context/AuthContext'
-import type { Bay, Booking, Company, Technician, Vehicle } from '../types'
+import type { Bay, Booking, Company, ListResponse, Technician, Vehicle } from '../types'
 
 function StatusBadge({ status }: { status: Booking['status'] }) {
 	const colors: Record<Booking['status'], string> = {
@@ -26,6 +26,7 @@ function StatusBadge({ status }: { status: Booking['status'] }) {
 		in_progress: 'bg-blue-100 text-blue-800',
 		closed: 'bg-emerald-100 text-emerald-800',
 		canceled: 'bg-rose-100 text-rose-800',
+		gone: 'bg-slate-100 text-slate-800',
 	}
 	return (
 		<span
@@ -76,7 +77,11 @@ function BookingsPage() {
 	const [filterCompany, setFilterCompany] = useState<string>('')
 	const [filterUnit, setFilterUnit] = useState<string>('')
 	const [filterStatus, setFilterStatus] = useState<string>('')
-	const { data, isLoading, isError } = useQuery({
+	const [search, setSearch] = useSearchParams()
+	const page = Math.max(1, Number(search.get('bookings_page') ?? 1))
+	const limit = Math.max(1, Number(search.get('bookings_limit') ?? 10))
+
+	const { data, isLoading, isError } = useQuery<ListResponse<Booking>>({
 		queryKey: [
 			'bookings',
 			{
@@ -86,18 +91,32 @@ function BookingsPage() {
 				unit: filterUnit,
 				status: filterStatus,
 			},
+			page,
+			limit,
 		],
 		queryFn: async () => {
-			const params: Record<string, string> = {}
+			const params: Record<string, string | number> = { envelope: 1, page, limit }
 			if (filterBay) params.bay_id = filterBay
 			if (filterTech) params.technician_id = filterTech
 			if (filterCompany) params.company_id = filterCompany
 			if (filterUnit) params.vehicle_id = filterUnit
 			if (filterStatus) params.status = filterStatus
-			const res = await api.get<Booking[]>('/api/bookings', { params })
-			return (res.data ?? []) as Booking[]
+			const res = await api.get<ListResponse<Booking>>('/api/bookings', { params })
+			return res.data
 		},
 	})
+
+	const handleSetPage = (p: number) => {
+		const next = new URLSearchParams(search)
+		next.set('bookings_page', String(p))
+		setSearch(next, { replace: true })
+	}
+	const handleSetLimit = (l: number) => {
+		const next = new URLSearchParams(search)
+		next.set('bookings_limit', String(l))
+		next.set('bookings_page', '1')
+		setSearch(next, { replace: true })
+	}
 
 	const mutation = useMutation({
 		mutationFn: async ({
@@ -105,17 +124,20 @@ function BookingsPage() {
 			action,
 		}: {
 			id: string
-			action: 'close' | 'cancel'
+			action: 'close' | 'cancel' | 'gone'
 		}) => {
-			const path = action === 'close' ? 'close' : 'cancel'
+			const path =
+				action === 'close' ? 'close' : action === 'cancel' ? 'cancel' : 'gone'
 			await api.put(`/api/bookings/${id}/${path}`)
 		},
 		onSuccess: (_data, vars) => {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			if (vars.action === 'close') {
 				success('Booking ready')
-			} else {
+			} else if (vars.action === 'cancel') {
 				success('Booking canceled')
+			} else {
+				success('Truck gone')
 			}
 		},
 		onError: () => error('Failed to update booking status'),
@@ -218,8 +240,8 @@ function BookingsPage() {
 						</div>
 						<div className='text-xs text-slate-600'>{row.description}</div>
 						<div className='text-xs text-slate-500'>
-							Unit:{' '}
-							{vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.plate ||
+							Unit: {row.unit_label ||
+								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.plate ||
 								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.vin ||
 								row.vehicle_id}
 						</div>
@@ -287,10 +309,25 @@ function BookingsPage() {
 								type='button'
 								onClick={() => mutation.mutate({ id: row.id, action: 'close' })}
 								className='inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-200 disabled:opacity-60'
-								disabled={mutation.isPending}
+								disabled={
+									mutation.isPending ||
+									row.status === 'closed' ||
+									row.status === 'gone'
+								}
 							>
 								<CheckCircleIcon className='h-4 w-4' />
 								Ready
+							</button>
+						</CustomTooltip>
+						<CustomTooltip content='Mark gone'>
+							<button
+								type='button'
+								onClick={() => mutation.mutate({ id: row.id, action: 'gone' })}
+								className='inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800 hover:bg-slate-200 disabled:opacity-60'
+								disabled={mutation.isPending || row.status !== 'closed'}
+							>
+								<CheckCircleIcon className='h-4 w-4' />
+								Gone
 							</button>
 						</CustomTooltip>
 						<CustomTooltip content='Cancel booking'>
@@ -300,7 +337,11 @@ function BookingsPage() {
 									mutation.mutate({ id: row.id, action: 'cancel' })
 								}
 								className='inline-flex items-center gap-1 rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800 hover:bg-rose-200 disabled:opacity-60'
-								disabled={mutation.isPending}
+								disabled={
+									mutation.isPending ||
+									row.status === 'canceled' ||
+									row.status === 'gone'
+								}
 							>
 								<XMarkIcon className='h-4 w-4' />
 								Cancel
@@ -383,6 +424,7 @@ function BookingsPage() {
 		// { label: 'in_progress', value: 'in_progress' },
 		{ label: 'ready', value: 'closed' }, // closed shown as ready
 		{ label: 'canceled', value: 'canceled' },
+		{ label: 'gone', value: 'gone' },
 	]
 
 	async function handleExport() {
@@ -517,8 +559,23 @@ function BookingsPage() {
 
 			<CustomTable
 				columns={columns}
-				data={data ?? []}
+				data={data?.data ?? []}
+				pagination
 				pageParamKey='bookings'
+				serverPagination={
+					data?.pagination
+						? {
+								total: data.pagination.total,
+								page: data.pagination.page,
+								limit: data.pagination.limit,
+								totalPages: data.pagination.totalPages,
+								hasNextPage: data.pagination.hasNextPage,
+								hasPrevPage: data.pagination.hasPrevPage,
+								onPageChange: handleSetPage,
+								onLimitChange: handleSetLimit,
+						  }
+						: undefined
+				}
 			/>
 
 			<BookingQuickModal

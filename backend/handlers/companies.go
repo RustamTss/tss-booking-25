@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/tss-booking-system/backend/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -38,7 +41,10 @@ func (h *Handler) ListCompanies(c *fiber.Ctx) error {
 	}
 	skip := (page - 1) * limit
 	opts := options.Find().
-		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetSort(bson.D{
+			{Key: "created_at", Value: -1},
+			{Key: "_id", Value: -1}, // tiebreaker for stable pagination
+		}).
 		SetLimit(limit).
 		SetSkip(skip)
 	cur, err := h.DB.Collection(companyCollection).Find(h.ctx(c), filter, opts)
@@ -49,6 +55,25 @@ func (h *Handler) ListCompanies(c *fiber.Ctx) error {
 	var items []models.Company
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
+	}
+	// total for pagination envelope
+	total, err := h.DB.Collection(companyCollection).CountDocuments(h.ctx(c), filter)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return fiber.ErrInternalServerError
+	}
+	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
+		totalPages := (total + limit - 1) / limit
+		return c.JSON(fiber.Map{
+			"data": items,
+			"pagination": fiber.Map{
+				"total":       total,
+				"page":        page,
+				"limit":       limit,
+				"totalPages":  totalPages,
+				"hasNextPage": page < totalPages,
+				"hasPrevPage": page > 1,
+			},
+		})
 	}
 	return c.JSON(items)
 }
