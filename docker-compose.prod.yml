@@ -33,6 +33,7 @@ services:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - TZ=America/New_York
+      - WEBHOOK_TOKEN=f58a0b90d29fa09dd5111322a557940212b4c96a1abfe8cbe01a2c1cf4323531
     depends_on:
       mongo:
         condition: service_healthy

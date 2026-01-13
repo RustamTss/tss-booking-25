@@ -13,6 +13,9 @@ import (
 
 func Register(app *fiber.App, h *handlers.Handler) {
 	app.Use(logger.New())
+	// Public webhook endpoint (secured via token) BEFORE CORS so it doesn't require browser CORS
+	app.Post("/webhooks/telegram/request", h.RequestWebhook)
+
 	// Register WebSocket endpoint before CORS and allow dev origins
 	app.Get("/ws", h.WSUpgrade, websocket.New(
 		h.WSSocket,
@@ -45,9 +48,6 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	app.Get("/auth/users/:id/logs", h.AuthMiddleware(models.RoleAdmin), h.ListUserLogs)
 	app.Get("/auth/me", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.Me)
 	app.Post("/debug/seed-admin", h.SeedAdmin)
-
-	// Public webhook endpoint (secured via token)
-	app.Post("/webhooks/telegram/request", h.RequestWebhook)
 
 	api := app.Group("/api", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice))
 
