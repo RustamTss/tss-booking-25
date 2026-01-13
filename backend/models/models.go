@@ -127,9 +127,11 @@ type Request struct {
 	DriverName  string             `bson:"driver_name" json:"driver_name"`
 	Phone       string             `bson:"phone" json:"phone"`
 	UnitNumber  string             `bson:"unit_number" json:"unit_number"`
-	StartAt     time.Time          `bson:"start_at" json:"start_at"`
+	StartAt     *time.Time         `bson:"start_at,omitempty" json:"start_at,omitempty"`
 	Status      RequestStatus      `bson:"status" json:"status"`
 	Source      string             `bson:"source,omitempty" json:"source,omitempty"`
+	Username    string             `bson:"username,omitempty" json:"username,omitempty"`
+	UserID      string             `bson:"user_id,omitempty" json:"user_id,omitempty"`
 	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
 }

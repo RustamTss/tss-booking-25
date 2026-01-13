@@ -3,14 +3,7 @@ import {
 	ArrowsPointingOutIcon,
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-	format,
-	getDay,
-	isSameDay,
-	parse,
-	startOfDay,
-	startOfWeek,
-} from 'date-fns'
+import { format, getDay, parse, startOfDay, startOfWeek } from 'date-fns'
 import { enUS } from 'date-fns/locale'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -198,17 +191,6 @@ function CalendarPage() {
 			return res.data
 		},
 	})
-
-	// Align Day view's visible date with the first returned event so header and data match
-	useEffect(() => {
-		if (view !== 'day') return
-		if (!Array.isArray(data) || data.length === 0) return
-		const firstDate = startOfDay(new Date(data[0].start))
-		if (!isSameDay(firstDate, date)) {
-			setDate(firstDate)
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [view, data])
 
 	const createMutation = useMutation({
 		mutationFn: async () => {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
@@ -24,9 +24,15 @@ export default function RequestsPage() {
 	const listQuery = useQuery<ListResponse<Request>>({
 		queryKey: ['requests', { status }, page, limit],
 		queryFn: async () => {
-			const params: Record<string, string | number> = { envelope: 1, page, limit }
+			const params: Record<string, string | number> = {
+				envelope: 1,
+				page,
+				limit,
+			}
 			if (status) params.status = status
-			const res = await api.get<ListResponse<Request>>('/api/requests', { params })
+			const res = await api.get<ListResponse<Request>>('/api/requests', {
+				params,
+			})
 			return res.data
 		},
 	})
@@ -52,14 +58,51 @@ export default function RequestsPage() {
 	const rows = useMemo(() => listQuery.data?.data ?? [], [listQuery.data])
 
 	const columns: Array<Column<Request & { actions?: null }>> = [
-		{ key: 'company_name', header: 'Company' },
-		{ key: 'driver_name', header: 'Driver' },
+		{
+			key: 'driver_name',
+			header: 'Driver',
+			render: r => (
+				<NavLink to={`/requests/${r.id}`} className='text-sky-600 underline'>
+					{r.driver_name || 'Not set'}
+				</NavLink>
+			),
+		},
 		{ key: 'phone', header: 'Phone' },
-		{ key: 'unit_number', header: 'Unit' },
+		{
+			key: 'company_name',
+			header: 'Company',
+			render: r =>
+				r.company_name ? (
+					<span>{r.company_name}</span>
+				) : (
+					<span className='text-slate-500'>Not set</span>
+				),
+		},
+		{
+			key: 'unit_number',
+			header: 'Unit',
+			render: r => (
+				<span>
+					{r.unit_number || <span className='text-slate-500'>Not set</span>}
+				</span>
+			),
+		},
 		{
 			key: 'start_at',
 			header: 'Start',
-			render: r => <span>{new Date(r.start_at).toLocaleString()}</span>,
+			render: r => {
+				const s = r.start_at as unknown as string
+				if (!s) return <span className='text-slate-500'>Not set</span>
+				const d = new Date(s)
+				if (isNaN(d.getTime()))
+					return <span className='text-slate-500'>Not set</span>
+				return <span>{d.toLocaleString()}</span>
+			},
+		},
+		{
+			key: 'username',
+			header: 'Username',
+			render: r => <span>{r.username || '—'}</span>,
 		},
 		{
 			key: 'status',
@@ -143,4 +186,3 @@ export default function RequestsPage() {
 		</div>
 	)
 }
-

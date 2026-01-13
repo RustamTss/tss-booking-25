@@ -105,6 +105,7 @@ func Register(app *fiber.App, h *handlers.Handler) {
 
 	// Requests
 	api.Get("/requests", h.ListRequests)
+	api.Get("/requests/:id", h.GetRequest)
 	api.Put("/requests/:id", h.UpdateRequest)
 
 	api.Get("/settings/telegram", h.AuthMiddleware(models.RoleAdmin), h.GetTelegramSettings)

@@ -127,9 +127,11 @@ export interface Request {
 	driver_name: string
 	phone: string
 	unit_number: string
-	start_at: string
+	start_at?: string
 	status: RequestStatus
 	source?: string
+	username?: string
+	user_id?: string
 	created_at: string
 	updated_at: string
 }

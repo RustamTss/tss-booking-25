@@ -17,7 +17,6 @@ var bayNames = []string{
 	"Bay-2-1",
 	"Bay-2-2",
 	"IB(2-3)-1",
-	"IB(2-3)-2",
 	"Alignment-Rack",
 	"Bay-3-1",
 	"Bay-3-2",

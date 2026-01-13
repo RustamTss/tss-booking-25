@@ -26,6 +26,7 @@ import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import LogsPage from './pages/LogsPage'
 import ProfilePage from './pages/ProfilePage.tsx'
+import RequestDetailsPage from './pages/RequestDetailsPage'
 import RequestsPage from './pages/RequestsPage'
 import SettingsPage from './pages/SettingsPage'
 import TechnicianDetailsPage from './pages/TechnicianDetailsPage'
@@ -150,6 +151,7 @@ function App() {
 								<Route path='/vehicles' element={<VehiclesPage />} />
 								<Route path='/vehicles/:id' element={<UnitDetailsPage />} />
 								<Route path='/requests' element={<RequestsPage />} />
+								<Route path='/requests/:id' element={<RequestDetailsPage />} />
 								<Route path='/users' element={<UsersPage />} />
 								<Route path='/users/:id' element={<UserDetailsPage />} />
 								<Route path='/logs' element={<LogsPage />} />

@@ -59,21 +59,34 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	phone := get("phone", "Phone", "phone_number", "Phone Number")
 	unit := get("unit_number", "Unit Number", "unit", "Unit")
 	startRaw := get("start_datetime", "Start Date Time", "start_at", "Start")
+	username := get("username", "Username", "telegram_username", "Telegram Username")
+	userID := get("user_id", "User ID", "telegram_user_id", "Telegram User ID", "chat_id")
 
 	var startAt time.Time
+	var startPtr *time.Time
 	if startRaw != "" {
+		// Prefer ISO-8601 first (with timezone info)
 		if t, err := time.Parse(time.RFC3339Nano, startRaw); err == nil {
 			startAt = t
 		} else if t, err := time.Parse(time.RFC3339, startRaw); err == nil {
 			startAt = t
-		} else if t, err := time.Parse("01/02/2006 15:04", startRaw); err == nil {
-			startAt = t
-		} else if t, err := time.Parse("2006-01-02 15:04", startRaw); err == nil {
-			startAt = t
+		} else {
+			// Tolerant parsing for common local formats; assume shop timezone (h.TZ)
+			formats := []string{
+				"02.01.2006 15:04", // dd.MM.yyyy HH:mm  (e.g. 13.01.2026 12:00)
+				"01/02/2006 15:04", // MM/dd/yyyy HH:mm
+				"2006-01-02 15:04", // yyyy-MM-dd HH:mm
+			}
+			for _, f := range formats {
+				if t, err := time.ParseInLocation(f, startRaw, h.TZ); err == nil {
+					startAt = t
+					break
+				}
+			}
 		}
 	}
-	if startAt.IsZero() {
-		startAt = h.now()
+	if !startAt.IsZero() {
+		startPtr = &startAt
 	}
 
 	req := models.Request{
@@ -82,9 +95,11 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 		DriverName:  driver,
 		Phone:       phone,
 		UnitNumber:  unit,
-		StartAt:     startAt,
+		StartAt:     startPtr,
 		Status:      models.RequestNew,
 		Source:      "telegram_bot",
+		Username:    username,
+		UserID:      userID,
 		CreatedAt:   h.now(),
 		UpdatedAt:   h.now(),
 	}
@@ -94,12 +109,16 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	// Realtime
 	pushRealtime(models.RealtimeEvent{Type: "request.created", Data: req})
 	// Optional telegram summary
+	startText := ""
+	if req.StartAt != nil && !req.StartAt.IsZero() {
+		startText = req.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM")
+	}
 	data := map[string]string{
 		"company_name": req.CompanyName,
 		"driver_name":  req.DriverName,
 		"phone":        req.Phone,
 		"unit_number":  req.UnitNumber,
-		"start_at":     req.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM"),
+		"start_at":     startText,
 	}
 	_ = h.Telegram.Notify(h.renderTelegramFallback("request", models.Booking{}, data))
 	return c.SendStatus(fiber.StatusOK)
@@ -135,6 +154,12 @@ func (h *Handler) ListRequests(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
+	// Normalize zero times to nil so clients don't see 0001-01-01
+	for i := range items {
+		if items[i].StartAt != nil && items[i].StartAt.IsZero() {
+			items[i].StartAt = nil
+		}
+	}
 	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
 		total, err := h.DB.Collection(requestCollection).CountDocuments(h.ctx(c), filter)
 		if err != nil && err != mongo.ErrNoDocuments {
@@ -144,16 +169,35 @@ func (h *Handler) ListRequests(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"data": items,
 			"pagination": fiber.Map{
-				"total":        total,
-				"page":         page,
-				"limit":        limit,
-				"totalPages":   totalPages,
-				"hasNextPage":  page < totalPages,
-				"hasPrevPage":  page > 1,
+				"total":       total,
+				"page":        page,
+				"limit":       limit,
+				"totalPages":  totalPages,
+				"hasNextPage": page < totalPages,
+				"hasPrevPage": page > 1,
 			},
 		})
 	}
 	return c.JSON(items)
+}
+
+// GetRequest returns one request by id
+func (h *Handler) GetRequest(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	var r models.Request
+	if err := h.DB.Collection(requestCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&r); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+	if r.StartAt != nil && r.StartAt.IsZero() {
+		r.StartAt = nil
+	}
+	return c.JSON(r)
 }
 
 // UpdateRequest updates status of a request
