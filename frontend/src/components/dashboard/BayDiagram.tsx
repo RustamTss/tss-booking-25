@@ -5,7 +5,9 @@ import truckBlue from '../../assets/frontal-truck-blue.png'
 import truckGreen from '../../assets/frontal-truck-green.png'
 import truckOrange from '../../assets/frontal-truck-orange.png'
 // red icon no longer used for available state; keep imports minimal
+import moment from 'moment-timezone'
 import truckGray from '../../assets/frontal-truck-gray.png'
+import { BUSINESS_TZ } from '../../timezone'
 import type { Bay, Booking, Company, Technician, Vehicle } from '../../types'
 import FullWidthModal from '../calendar/FullWidthModal'
 import BookingQuickModal from '../quickAddModals/BookingQuickModal'
@@ -121,11 +123,13 @@ export default function BayDiagram() {
 		queryKey: ['calendar-ready-diagram'],
 		queryFn: async () => {
 			const now = new Date()
-			const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-			const end = new Date(start)
-			end.setDate(end.getDate() + 1)
+			const start = moment.tz(now, BUSINESS_TZ).startOf('day')
+			const end = start.clone().add(1, 'day')
 			const res = await api.get<Booking[]>('/api/bookings/ready', {
-				params: { from: start.toISOString(), to: end.toISOString() },
+				params: {
+					from: start.toDate().toISOString(),
+					to: end.toDate().toISOString(),
+				},
 			})
 			return res.data
 		},
@@ -185,12 +189,8 @@ export default function BayDiagram() {
 		status: 'open' as Booking['status'],
 		notes: '',
 	})
-	const formatForInput = (d: Date) => {
-		const pad = (n: number) => String(n).padStart(2, '0')
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-			d.getDate()
-		)}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-	}
+	const formatForInput = (d: Date) =>
+		moment.tz(d, BUSINESS_TZ).format('YYYY-MM-DDTHH:mm')
 	const openModalForBooking = (b: Booking) => {
 		setEditing(b)
 		setForm({
@@ -265,13 +265,15 @@ export default function BayDiagram() {
 		if (status === 'open' && occ) {
 			tooltip = `#${occ.number} • ${label}\nStart: ${new Date(
 				occ.start
-			).toLocaleString()}`
+			).toLocaleString('en-US', { timeZone: BUSINESS_TZ })}`
 		} else if (status === 'ready' && bay) {
 			const rb = (readyQuery.data ?? []).find(x => x.bay_id === bay.id)
 			if (rb) {
 				const when = rb.end
-					? new Date(rb.end).toLocaleString()
-					: new Date(rb.start).toLocaleString()
+					? new Date(rb.end).toLocaleString('en-US', { timeZone: BUSINESS_TZ })
+					: new Date(rb.start).toLocaleString('en-US', {
+							timeZone: BUSINESS_TZ,
+					  })
 				tooltip = `#${rb.number || rb.id} • ${label}\nReady: ${when}`
 			}
 		} else if (status === 'available') {
@@ -402,8 +404,16 @@ export default function BayDiagram() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				// keep status as-is
 				notes: form.notes || '',
 			}
@@ -427,8 +437,16 @@ export default function BayDiagram() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				status: form.status,
 				notes: form.notes || '',
 			}

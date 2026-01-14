@@ -7,6 +7,7 @@ import {
 	XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import moment from 'moment-timezone'
 import { useMemo, useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
@@ -18,7 +19,15 @@ import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
 import { useAuth } from '../context/AuthContext'
-import type { Bay, Booking, Company, ListResponse, Technician, Vehicle } from '../types'
+import { BUSINESS_TZ } from '../timezone'
+import type {
+	Bay,
+	Booking,
+	Company,
+	ListResponse,
+	Technician,
+	Vehicle,
+} from '../types'
 
 function StatusBadge({ status }: { status: Booking['status'] }) {
 	const colors: Record<Booking['status'], string> = {
@@ -41,6 +50,8 @@ function BookingsPage() {
 	const queryClient = useQueryClient()
 	const { success, error } = useToast()
 	const { role } = useAuth()
+	const formatForInput = (d: Date) =>
+		moment.tz(d, BUSINESS_TZ).format('YYYY-MM-DDTHH:mm')
 	const [modalOpen, setModalOpen] = useState(false)
 	const [editingId, setEditingId] = useState<string | null>(null)
 	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
@@ -95,13 +106,19 @@ function BookingsPage() {
 			limit,
 		],
 		queryFn: async () => {
-			const params: Record<string, string | number> = { envelope: 1, page, limit }
+			const params: Record<string, string | number> = {
+				envelope: 1,
+				page,
+				limit,
+			}
 			if (filterBay) params.bay_id = filterBay
 			if (filterTech) params.technician_id = filterTech
 			if (filterCompany) params.company_id = filterCompany
 			if (filterUnit) params.vehicle_id = filterUnit
 			if (filterStatus) params.status = filterStatus
-			const res = await api.get<ListResponse<Booking>>('/api/bookings', { params })
+			const res = await api.get<ListResponse<Booking>>('/api/bookings', {
+				params,
+			})
 			return res.data
 		},
 	})
@@ -153,8 +170,16 @@ function BookingsPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				status: 'open',
 				notes: '',
 			}
@@ -190,8 +215,16 @@ function BookingsPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				status: 'open',
 				notes: '',
 			}
@@ -240,7 +273,8 @@ function BookingsPage() {
 						</div>
 						<div className='text-xs text-slate-600'>{row.description}</div>
 						<div className='text-xs text-slate-500'>
-							Unit: {row.unit_label ||
+							Unit:{' '}
+							{row.unit_label ||
 								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.plate ||
 								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.vin ||
 								row.vehicle_id}
@@ -262,9 +296,15 @@ function BookingsPage() {
 				header: 'Start',
 				render: row => (
 					<div className='text-sm text-slate-700'>
-						{new Date(row.start).toLocaleString()}
+						{new Date(row.start).toLocaleString('en-US', {
+							timeZone: BUSINESS_TZ,
+						})}
 						<div className='text-xs text-slate-500'>
-							{row.end ? `until ${new Date(row.end).toLocaleString()}` : 'open'}
+							{row.end
+								? `until ${new Date(row.end).toLocaleString('en-US', {
+										timeZone: BUSINESS_TZ,
+								  })}`
+								: 'open'}
 						</div>
 					</div>
 				),
@@ -292,8 +332,8 @@ function BookingsPage() {
 										bay_id: row.bay_id,
 										technician_ids:
 											(row.technician_ids as string[] | undefined) || [],
-										start: row.start.slice(0, 16),
-										end: row.end ? row.end.slice(0, 16) : '',
+										start: formatForInput(new Date(row.start)),
+										end: row.end ? formatForInput(new Date(row.end)) : '',
 										company_id: row.company_id ?? '',
 									})
 									setModalOpen(true)

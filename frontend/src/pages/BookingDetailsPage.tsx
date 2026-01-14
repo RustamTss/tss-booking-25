@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import CustomDetailsPage from '../components/shared/layout/CustomDetailsPage'
 import CustomBadge from '../components/shared/ui/CustomBadge'
+import { BUSINESS_TZ } from '../timezone'
 import type {
 	AuditLog,
 	Bay,
@@ -96,8 +97,18 @@ export default function BookingDetailsPage() {
 			),
 		},
 		{ label: 'Technicians', value: techNames || '—' },
-		{ label: 'Start', value: new Date(b.start).toLocaleString() },
-		{ label: 'End', value: b.end ? new Date(b.end).toLocaleString() : '—' },
+		{
+			label: 'Start',
+			value: new Date(b.start).toLocaleString('en-US', {
+				timeZone: BUSINESS_TZ,
+			}),
+		},
+		{
+			label: 'End',
+			value: b.end
+				? new Date(b.end).toLocaleString('en-US', { timeZone: BUSINESS_TZ })
+				: '—',
+		},
 		{ label: 'Status', value: b.status },
 		{
 			label: 'Fullbay Service',
@@ -117,8 +128,18 @@ export default function BookingDetailsPage() {
 				'—'
 			),
 		},
-		{ label: 'Created', value: new Date(b.created_at).toLocaleString() },
-		{ label: 'Updated', value: new Date(b.updated_at).toLocaleString() },
+		{
+			label: 'Created',
+			value: new Date(b.created_at).toLocaleString('en-US', {
+				timeZone: BUSINESS_TZ,
+			}),
+		},
+		{
+			label: 'Updated',
+			value: new Date(b.updated_at).toLocaleString('en-US', {
+				timeZone: BUSINESS_TZ,
+			}),
+		},
 	]
 
 	return (
@@ -177,10 +198,15 @@ export default function BookingDetailsPage() {
 							details: (
 								<span>
 									Created booking #{num} for unit {unit} in bay {bay} starting{' '}
-									{new Date(start).toLocaleString()}.
+									{new Date(start).toLocaleString('en-US', {
+										timeZone: BUSINESS_TZ,
+									})}
+									.
 								</span>
 							),
-							time: new Date(l.created_at).toLocaleString(),
+							time: new Date(l.created_at).toLocaleString('en-US', {
+								timeZone: BUSINESS_TZ,
+							}),
 						}
 					}
 					if (l.action === 'booking.updated') {
@@ -217,12 +243,18 @@ export default function BookingDetailsPage() {
 						const ms = m['start'] as { from?: string; to?: string } | undefined
 						if (ms)
 							addChange('Start', ms.from, ms.to, v =>
-								new Date(String(v)).toLocaleString()
+								new Date(String(v)).toLocaleString('en-US', {
+									timeZone: BUSINESS_TZ,
+								})
 							)
 						const me = m['end'] as { from?: string; to?: string } | undefined
 						if (me)
 							addChange('End', me.from, me.to, v =>
-								v ? new Date(String(v)).toLocaleString() : '—'
+								v
+									? new Date(String(v)).toLocaleString('en-US', {
+											timeZone: BUSINESS_TZ,
+									  })
+									: '—'
 							)
 						const mstatus = m['status'] as
 							| { from?: string; to?: string }
@@ -256,7 +288,9 @@ export default function BookingDetailsPage() {
 							id: l.id,
 							type: 'update',
 							details: <span>Updated {parts.join('; ')}.</span>,
-							time: new Date(l.created_at).toLocaleString(),
+							time: new Date(l.created_at).toLocaleString('en-US', {
+								timeZone: BUSINESS_TZ,
+							}),
 						}
 					}
 					if (l.action === 'booking.canceled') {
@@ -264,7 +298,9 @@ export default function BookingDetailsPage() {
 							id: l.id,
 							type: 'status',
 							details: <span>Booking canceled.</span>,
-							time: new Date(l.created_at).toLocaleString(),
+							time: new Date(l.created_at).toLocaleString('en-US', {
+								timeZone: BUSINESS_TZ,
+							}),
 						}
 					}
 					if (l.action === 'booking.closed') {
@@ -272,14 +308,18 @@ export default function BookingDetailsPage() {
 							id: l.id,
 							type: 'status',
 							details: <span>Booking ready.</span>,
-							time: new Date(l.created_at).toLocaleString(),
+							time: new Date(l.created_at).toLocaleString('en-US', {
+								timeZone: BUSINESS_TZ,
+							}),
 						}
 					}
 					return {
 						id: l.id,
 						type: 'other',
 						details: <span>{l.action}</span>,
-						time: new Date(l.created_at).toLocaleString(),
+						time: new Date(l.created_at).toLocaleString('en-US', {
+							timeZone: BUSINESS_TZ,
+						}),
 					}
 				})
 				const columns: Array<Column<Row>> = [

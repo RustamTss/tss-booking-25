@@ -3,13 +3,13 @@ import {
 	ArrowsPointingOutIcon,
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { format, getDay, parse, startOfDay, startOfWeek } from 'date-fns'
-import { enUS } from 'date-fns/locale'
+import { startOfWeek } from 'date-fns'
+import moment from 'moment-timezone'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
 	Calendar as BigCalendar,
 	Views,
-	dateFnsLocalizer,
+	momentLocalizer,
 	type Components as RBCComponents,
 	type Event as RBCEvent,
 	type EventProps as RBCEventProps,
@@ -27,6 +27,7 @@ import FullWidthModal from '../components/calendar/FullWidthModal'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
 import CreateButton from '../components/shared/ui/CreateButton'
+import { BUSINESS_TZ } from '../timezone'
 import type {
 	Bay,
 	Booking,
@@ -38,50 +39,38 @@ import type {
 
 type ViewMode = 'day' | 'week' | 'month' | 'agenda'
 
-const locales = {
-	'en-US': enUS,
-}
-
-const localizer = dateFnsLocalizer({
-	format,
-	parse,
-	startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 0 }),
-	getDay,
-	locales,
-})
+// Force moment to operate in ET everywhere for the calendar
+moment.tz.setDefault(BUSINESS_TZ)
+const localizer = momentLocalizer(moment as unknown as typeof import('moment'))
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DnDCalendar = withDragAndDrop(BigCalendar as any)
 
 function computeRange(currentDate: Date, view: ViewMode) {
-	// Normalize ranges to midnight boundaries to avoid missing AM events
+	// Compute ranges anchored to ET midnight using moment-timezone
 	if (view === 'day') {
-		const s = startOfDay(currentDate)
-		const e = new Date(s)
-		e.setDate(e.getDate() + 1)
-		return { from: s.toISOString(), to: e.toISOString() }
+		const s = moment.tz(currentDate, BUSINESS_TZ).startOf('day')
+		const e = s.clone().add(1, 'day')
+		return { from: s.toDate().toISOString(), to: e.toDate().toISOString() }
 	}
 	if (view === 'week') {
 		const ws = startOfWeek(currentDate, { weekStartsOn: 0 })
-		const s = startOfDay(ws)
-		const e = new Date(s)
-		e.setDate(e.getDate() + 7)
-		return { from: s.toISOString(), to: e.toISOString() }
+		const s = moment.tz(ws, BUSINESS_TZ).startOf('day')
+		const e = s.clone().add(7, 'day')
+		return { from: s.toDate().toISOString(), to: e.toDate().toISOString() }
 	}
 	if (view === 'month') {
-		const s = startOfDay(
-			new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-		)
-		const e = new Date(s)
-		e.setMonth(e.getMonth() + 1)
-		return { from: s.toISOString(), to: e.toISOString() }
+		const first = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+		const s = moment.tz(first, BUSINESS_TZ).startOf('day')
+		const e = s.clone().add(1, 'month')
+		return { from: s.toDate().toISOString(), to: e.toDate().toISOString() }
 	}
-	// agenda (open range: one week back, 30 days forward)
-	const s = startOfDay(new Date(currentDate))
-	s.setDate(s.getDate() - 7)
-	const e = startOfDay(new Date(currentDate))
-	e.setDate(e.getDate() + 30)
-	return { from: s.toISOString(), to: e.toISOString() }
+	const s = moment
+		.tz(currentDate, BUSINESS_TZ)
+		.startOf('day')
+		.subtract(7, 'day')
+	const e = moment.tz(currentDate, BUSINESS_TZ).startOf('day').add(30, 'day')
+	return { from: s.toDate().toISOString(), to: e.toDate().toISOString() }
 }
 
 function CalendarPage() {
@@ -202,8 +191,16 @@ function CalendarPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				status: 'open' as BookingStatus,
 				notes: '',
 			}
@@ -239,8 +236,16 @@ function CalendarPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
-				start: new Date(form.start).toISOString(),
-				end: form.end ? new Date(form.end).toISOString() : undefined,
+				start: moment
+					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+					.toDate()
+					.toISOString(),
+				end: form.end
+					? moment
+							.tz(form.end, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
+							.toDate()
+							.toISOString()
+					: undefined,
 				// do not set status to avoid unintended resets
 				notes: '',
 			}
@@ -325,12 +330,8 @@ function CalendarPage() {
 		return <span className='gcal-event-content'>{title as string}</span>
 	}
 
-	const formatForInput = (d: Date) => {
-		const pad = (n: number) => String(n).padStart(2, '0')
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-			d.getDate()
-		)}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-	}
+	const formatForInput = (d: Date) =>
+		moment.tz(d, BUSINESS_TZ).format('YYYY-MM-DDTHH:mm')
 
 	const handleSlot = (slot: SlotInfo) => {
 		// Enter create mode and fully reset the form for a clean create experience
@@ -548,9 +549,12 @@ function CalendarPage() {
 						onNavigate={(d: Date) => setDate(d)}
 						defaultView={Views.MONTH}
 						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
-						scrollToTime={new Date(1970, 0, 1, 6, 0, 0)}
-						min={new Date(1970, 0, 1, 6, 0, 0)}
-						max={new Date(1970, 0, 1, 21, 0, 0)}
+						getNow={() => moment.tz(BUSINESS_TZ).toDate()}
+						scrollToTime={moment
+							.tz([1970, 0, 1, 6, 0, 0], BUSINESS_TZ)
+							.toDate()}
+						min={moment.tz([1970, 0, 1, 6, 0, 0], BUSINESS_TZ).toDate()}
+						max={moment.tz([1970, 0, 1, 21, 0, 0], BUSINESS_TZ).toDate()}
 						style={{ height: '100%' }}
 						onSelectEvent={(event: RBCEvent) => {
 							const booking = event.resource as Booking
@@ -575,11 +579,18 @@ function CalendarPage() {
 						onSelectSlot={handleSlot}
 						onEventDrop={async ({ event, start, end }) => {
 							const booking = event.resource as Booking
-							const startIso = (
-								start instanceof Date ? start : new Date(start)
-							).toISOString()
+							const startIso = moment
+								.tz(
+									start instanceof Date ? start : new Date(start),
+									BUSINESS_TZ
+								)
+								.toDate()
+								.toISOString()
 							const endIso = end
-								? (end instanceof Date ? end : new Date(end)).toISOString()
+								? moment
+										.tz(end instanceof Date ? end : new Date(end), BUSINESS_TZ)
+										.toDate()
+										.toISOString()
 								: undefined
 							await api.put(`/api/bookings/${booking.id}`, {
 								...booking,
@@ -591,11 +602,18 @@ function CalendarPage() {
 						}}
 						onEventResize={async ({ event, start, end }) => {
 							const booking = event.resource as Booking
-							const startIso = (
-								start instanceof Date ? start : new Date(start)
-							).toISOString()
+							const startIso = moment
+								.tz(
+									start instanceof Date ? start : new Date(start),
+									BUSINESS_TZ
+								)
+								.toDate()
+								.toISOString()
 							const endIso = end
-								? (end instanceof Date ? end : new Date(end)).toISOString()
+								? moment
+										.tz(end instanceof Date ? end : new Date(end), BUSINESS_TZ)
+										.toDate()
+										.toISOString()
 								: undefined
 							await api.put(`/api/bookings/${booking.id}`, {
 								...booking,
@@ -742,9 +760,12 @@ function CalendarPage() {
 						defaultView={Views.MONTH}
 						views={[Views.DAY, Views.WEEK, Views.MONTH, Views.AGENDA]}
 						// Working hours: 6 AM - 9 PM in day/week views
-						scrollToTime={new Date(1970, 0, 1, 6, 0, 0)}
-						min={new Date(1970, 0, 1, 6, 0, 0)}
-						max={new Date(1970, 0, 1, 21, 0, 0)}
+						getNow={() => moment.tz(BUSINESS_TZ).toDate()}
+						scrollToTime={moment
+							.tz([1970, 0, 1, 6, 0, 0], BUSINESS_TZ)
+							.toDate()}
+						min={moment.tz([1970, 0, 1, 6, 0, 0], BUSINESS_TZ).toDate()}
+						max={moment.tz([1970, 0, 1, 21, 0, 0], BUSINESS_TZ).toDate()}
 						style={{ height: '100%' }}
 						onSelectEvent={(event: RBCEvent) => {
 							const booking = event.resource as Booking
