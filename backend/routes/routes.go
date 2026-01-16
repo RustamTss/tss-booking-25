@@ -60,6 +60,14 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	api.Delete("/technicians/:id", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.DeleteTechnician)
 	api.Get("/technicians/:id/logs", h.ListTechnicianLogs)
 
+	// Service writers
+	api.Get("/service-writers", h.ListServiceWriters)
+	api.Get("/service-writers/:id", h.GetOneServiceWriter)
+	api.Post("/service-writers", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.CreateServiceWriter)
+	api.Put("/service-writers/:id", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.UpdateServiceWriter)
+	api.Delete("/service-writers/:id", h.AuthMiddleware(models.RoleAdmin, models.RoleOffice), h.DeleteServiceWriter)
+	api.Get("/service-writers/:id/logs", h.ListServiceWriterLogs)
+
 	api.Get("/bays", h.ListBays)
 	api.Get("/bays/occupancy", h.ListBayOccupancy)
 	api.Get("/bays/:id", h.GetBay)
@@ -107,6 +115,7 @@ func Register(app *fiber.App, h *handlers.Handler) {
 	api.Get("/requests", h.ListRequests)
 	api.Get("/requests/:id", h.GetRequest)
 	api.Put("/requests/:id", h.UpdateRequest)
+	api.Delete("/requests/:id", h.AuthMiddleware(models.RoleAdmin), h.DeleteRequest)
 
 	api.Get("/settings/telegram", h.AuthMiddleware(models.RoleAdmin), h.GetTelegramSettings)
 	api.Put("/settings/telegram", h.AuthMiddleware(models.RoleAdmin), h.SaveTelegramSettings)

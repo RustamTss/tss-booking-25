@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"strings"
+
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/tss-booking-system/backend/models"
@@ -56,6 +60,54 @@ func (h *Handler) ListCompanies(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
 	}
+	// Aggregate unit counts per company
+	type kv struct {
+		ID    primitive.ObjectID `bson:"_id"`
+		Count int                `bson:"count"`
+	}
+	unitCounts := map[primitive.ObjectID]int{}
+	if aggCur, err := h.DB.Collection(vehicleCollection).Aggregate(h.ctx(c), mongo.Pipeline{
+		{{Key: "$group", Value: bson.M{"_id": "$company_id", "count": bson.M{"$sum": 1}}}},
+	}); err == nil {
+		defer aggCur.Close(h.ctx(c))
+		for aggCur.Next(h.ctx(c)) {
+			var rec kv
+			if err := aggCur.Decode(&rec); err == nil {
+				unitCounts[rec.ID] = rec.Count
+			}
+		}
+	}
+	// Out type with units count
+	type companyOut struct {
+		models.Company `bson:",inline" json:",inline"`
+		UnitsCount     int `json:"company_units_count"`
+	}
+	out := make([]companyOut, 0, len(items))
+	for _, it := range items {
+		out = append(out, companyOut{
+			Company:    it,
+			UnitsCount: unitCounts[it.ID],
+		})
+	}
+	// CSV export
+	if exp := strings.ToLower(c.Query("export")); exp == "csv" || exp == "excel" {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.Write([]string{"name", "contact", "phone", "units"})
+		for _, it := range out {
+			_ = w.Write([]string{
+				it.Name,
+				it.Contact,
+				it.Phone,
+				// convert count to string
+				func(n int) string { return strconv.Itoa(n) }(it.UnitsCount),
+			})
+		}
+		w.Flush()
+		c.Set("Content-Type", "text/csv")
+		c.Set("Content-Disposition", "attachment; filename=\"companies.csv\"")
+		return c.Send(buf.Bytes())
+	}
 	// total for pagination envelope
 	total, err := h.DB.Collection(companyCollection).CountDocuments(h.ctx(c), filter)
 	if err != nil && err != mongo.ErrNoDocuments {
@@ -64,7 +116,7 @@ func (h *Handler) ListCompanies(c *fiber.Ctx) error {
 	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
 		totalPages := (total + limit - 1) / limit
 		return c.JSON(fiber.Map{
-			"data": items,
+			"data": out,
 			"pagination": fiber.Map{
 				"total":       total,
 				"page":        page,
@@ -75,7 +127,7 @@ func (h *Handler) ListCompanies(c *fiber.Ctx) error {
 			},
 		})
 	}
-	return c.JSON(items)
+	return c.JSON(out)
 }
 
 // GetCompany returns company by id

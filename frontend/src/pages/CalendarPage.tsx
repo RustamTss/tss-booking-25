@@ -20,6 +20,8 @@ import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { api } from '../api/client'
+import { getErrorMessage } from '../api/errors'
+import { playBookingSound } from '../audio'
 import CalendarMenuDropdown from '../components/calendar/CalendarMenuDropdown'
 import CalendarReady from '../components/calendar/CalendarReady'
 import CalendarWaitingList from '../components/calendar/CalendarWaitingList'
@@ -27,6 +29,8 @@ import FullWidthModal from '../components/calendar/FullWidthModal'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
 import CreateButton from '../components/shared/ui/CreateButton'
+import CustomTooltip from '../components/shared/ui/CustomTooltip'
+import { useToast } from '../components/shared/ui/ToastProvider'
 import { BUSINESS_TZ } from '../timezone'
 import type {
 	Bay,
@@ -109,6 +113,7 @@ function CalendarPage() {
 	const containerRef = useRef<HTMLDivElement | null>(null)
 	const [sideLeftWidth, setSideLeftWidth] = useState(0)
 	const [sideRightWidth, setSideRightWidth] = useState(0)
+	const { error: toastError } = useToast()
 	useEffect(() => {
 		const measure = () => {
 			const el = containerRef.current
@@ -211,6 +216,7 @@ function CalendarPage() {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			setModalOpen(false)
 			setEditingId(null)
+			playBookingSound()
 			setForm({
 				complaint: '',
 				description: '',
@@ -224,6 +230,13 @@ function CalendarPage() {
 				status: 'open',
 				notes: '',
 			})
+		},
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to create booking (bay may be occupied for this time)'
+			)
+			toastError(msg)
 		},
 	})
 	const updateMutation = useMutation({
@@ -256,6 +269,13 @@ function CalendarPage() {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			setModalOpen(false)
 			setEditingId(null)
+		},
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to update booking (bay may be occupied for this time)'
+			)
+			toastError(msg)
 		},
 	})
 
@@ -326,8 +346,34 @@ function CalendarPage() {
 	}
 
 	// Keep compact content; we don't expand details here
-	const EventContent = ({ title }: RBCEventProps<RBCEvent>) => {
-		return <span className='gcal-event-content'>{title as string}</span>
+	const EventContent = ({ event, title }: RBCEventProps<RBCEvent>) => {
+		const booking = event.resource as Booking
+		const techNames = (booking.technician_ids || [])
+			.map(id => (techsQuery.data ?? []).find(t => t.id === id)?.name)
+			.filter(Boolean)
+			.join(', ')
+		const unitLabel = booking.unit_label || booking.vehicle_id || ''
+		const bayLabel =
+			booking.bay_name ||
+			(baysQuery.data ?? []).find(x => x.id === booking.bay_id)?.name ||
+			booking.bay_id ||
+			''
+		const idLabel = booking.number || booking.id.slice(0, 6)
+		const tooltip = [
+			`#${idLabel}`,
+			techNames && `Tech: ${techNames}`,
+			unitLabel && `Unit: ${unitLabel}`,
+			bayLabel && `Bay: ${bayLabel}`,
+		]
+			.filter(Boolean)
+			.join(' • ')
+		return (
+			<CustomTooltip content={tooltip} className='block h-full w-full'>
+				<span className='gcal-event-content block h-full w-full'>
+					{title as string}
+				</span>
+			</CustomTooltip>
+		)
 	}
 
 	const formatForInput = (d: Date) =>
@@ -410,6 +456,9 @@ function CalendarPage() {
 				style={{
 					width: sideLeftWidth > 40 ? sideLeftWidth : 0,
 					display: sideLeftWidth > 40 ? 'block' : 'none',
+					maxHeight: 'calc(100vh - 160px)',
+					overflowY: 'auto',
+					paddingRight: 8,
 				}}
 			>
 				<CalendarReady
@@ -440,6 +489,9 @@ function CalendarPage() {
 				style={{
 					width: sideRightWidth > 40 ? Math.min(sideRightWidth, 200) : 0,
 					display: sideRightWidth > 40 ? 'block' : 'none',
+					maxHeight: 'calc(100vh - 160px)',
+					overflowY: 'auto',
+					paddingLeft: 8,
 				}}
 			>
 				<CalendarWaitingList
@@ -544,6 +596,7 @@ function CalendarPage() {
 						view={view}
 						eventPropGetter={eventPropGetter}
 						components={{ ...mainCalendarComponents, event: EventContent }}
+						tooltipAccessor={() => ''}
 						popup
 						onView={(v: View) => setView(v as ViewMode)}
 						onNavigate={(d: Date) => setDate(d)}
@@ -579,49 +632,71 @@ function CalendarPage() {
 						onSelectSlot={handleSlot}
 						onEventDrop={async ({ event, start, end }) => {
 							const booking = event.resource as Booking
-							const startIso = moment
-								.tz(
-									start instanceof Date ? start : new Date(start),
-									BUSINESS_TZ
+							try {
+								const startIso = moment
+									.tz(
+										start instanceof Date ? start : new Date(start),
+										BUSINESS_TZ
+									)
+									.toDate()
+									.toISOString()
+								const endIso = end
+									? moment
+											.tz(
+												end instanceof Date ? end : new Date(end),
+												BUSINESS_TZ
+											)
+											.toDate()
+											.toISOString()
+									: undefined
+								await api.put(`/api/bookings/${booking.id}`, {
+									...booking,
+									start: startIso,
+									end: endIso,
+								})
+								queryClient.invalidateQueries({ queryKey: ['agenda'] })
+								queryClient.invalidateQueries({ queryKey: ['bookings'] })
+							} catch (err) {
+								const msg = getErrorMessage(
+									err,
+									'Failed to move booking (bay may be occupied for this time)'
 								)
-								.toDate()
-								.toISOString()
-							const endIso = end
-								? moment
-										.tz(end instanceof Date ? end : new Date(end), BUSINESS_TZ)
-										.toDate()
-										.toISOString()
-								: undefined
-							await api.put(`/api/bookings/${booking.id}`, {
-								...booking,
-								start: startIso,
-								end: endIso,
-							})
-							queryClient.invalidateQueries({ queryKey: ['agenda'] })
-							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+								toastError(msg)
+							}
 						}}
 						onEventResize={async ({ event, start, end }) => {
 							const booking = event.resource as Booking
-							const startIso = moment
-								.tz(
-									start instanceof Date ? start : new Date(start),
-									BUSINESS_TZ
+							try {
+								const startIso = moment
+									.tz(
+										start instanceof Date ? start : new Date(start),
+										BUSINESS_TZ
+									)
+									.toDate()
+									.toISOString()
+								const endIso = end
+									? moment
+											.tz(
+												end instanceof Date ? end : new Date(end),
+												BUSINESS_TZ
+											)
+											.toDate()
+											.toISOString()
+									: undefined
+								await api.put(`/api/bookings/${booking.id}`, {
+									...booking,
+									start: startIso,
+									end: endIso,
+								})
+								queryClient.invalidateQueries({ queryKey: ['agenda'] })
+								queryClient.invalidateQueries({ queryKey: ['bookings'] })
+							} catch (err) {
+								const msg = getErrorMessage(
+									err,
+									'Failed to resize booking (bay may be occupied for this time)'
 								)
-								.toDate()
-								.toISOString()
-							const endIso = end
-								? moment
-										.tz(end instanceof Date ? end : new Date(end), BUSINESS_TZ)
-										.toDate()
-										.toISOString()
-								: undefined
-							await api.put(`/api/bookings/${booking.id}`, {
-								...booking,
-								start: startIso,
-								end: endIso,
-							})
-							queryClient.invalidateQueries({ queryKey: ['agenda'] })
-							queryClient.invalidateQueries({ queryKey: ['bookings'] })
+								toastError(msg)
+							}
 						}}
 						// Open custom dropdown instead of drilling down when "+X more" is clicked
 						onShowMore={
@@ -755,6 +830,7 @@ function CalendarPage() {
 							...fullscreenCalendarComponents,
 							event: EventContent,
 						}}
+						tooltipAccessor={() => ''}
 						onView={(v: View) => setView(v as ViewMode)}
 						onNavigate={(d: Date) => setDate(d)}
 						defaultView={Views.MONTH}

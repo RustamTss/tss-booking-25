@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -55,6 +57,23 @@ func (h *Handler) ListBays(c *fiber.Ctx) error {
 	var items []models.Bay
 	if err := cur.All(h.ctx(c), &items); err != nil {
 		return fiber.ErrInternalServerError
+	}
+	// CSV export
+	if exp := strings.ToLower(c.Query("export")); exp == "csv" || exp == "excel" {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.Write([]string{"key", "name", "created_at"})
+		for _, b := range items {
+			_ = w.Write([]string{
+				b.Key,
+				b.Name,
+				b.CreatedAt.In(h.TZ).Format("01/02/2006, 03:04 PM"),
+			})
+		}
+		w.Flush()
+		c.Set("Content-Type", "text/csv")
+		c.Set("Content-Disposition", "attachment; filename=\"bays.csv\"")
+		return c.Send(buf.Bytes())
 	}
 	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
 		total, err := h.DB.Collection(bayCollection).CountDocuments(h.ctx(c), filter)

@@ -93,6 +93,16 @@ type Technician struct {
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
+// ServiceWriter represents a front-desk service writer
+type ServiceWriter struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Name      string             `bson:"name" json:"name"`
+	Phone     string             `bson:"phone" json:"phone"`
+	Email     string             `bson:"email" json:"email"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+}
+
 type Bay struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Key       string             `bson:"key" json:"key"`
@@ -112,6 +122,7 @@ type Booking struct {
 	BayID            primitive.ObjectID   `bson:"bay_id" json:"bay_id"`
 	TechnicianIDs    []primitive.ObjectID `bson:"technician_ids" json:"technician_ids"`
 	CompanyID        primitive.ObjectID   `bson:"company_id" json:"company_id"`
+	ServiceWriterID  primitive.ObjectID   `bson:"service_writer_id,omitempty" json:"service_writer_id,omitempty"`
 	Start            time.Time            `bson:"start" json:"start"`
 	End              *time.Time           `bson:"end,omitempty" json:"end,omitempty"`
 	Status           BookingStatus        `bson:"status" json:"status"`

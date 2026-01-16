@@ -1,9 +1,11 @@
+import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import CustomDetailsPage from '../components/shared/layout/CustomDetailsPage'
 import CustomBadge from '../components/shared/ui/CustomBadge'
+import { useToast } from '../components/shared/ui/ToastProvider'
 import { BUSINESS_TZ } from '../timezone'
 import type {
 	AuditLog,
@@ -16,6 +18,7 @@ import type {
 
 export default function BookingDetailsPage() {
 	const { id } = useParams<{ id: string }>()
+	const { success } = useToast()
 	const bookingQuery = useQuery({
 		queryKey: ['booking', id],
 		queryFn: async () => (await api.get<Booking>(`/api/bookings/${id}`)).data,
@@ -72,6 +75,19 @@ export default function BookingDetailsPage() {
 		{ label: 'Complaint', value: b.complaint || '—' },
 		{ label: 'Description', value: b.description || '—' },
 		{
+			label: 'Service writer',
+			value: b.service_writer_name ? (
+				<NavLink
+					to={`/service-writers/${b.service_writer_id}`}
+					className='text-sky-600 underline'
+				>
+					{b.service_writer_name}
+				</NavLink>
+			) : (
+				'—'
+			),
+		},
+		{
 			label: 'Unit',
 			value: (
 				<NavLink
@@ -113,17 +129,18 @@ export default function BookingDetailsPage() {
 		{
 			label: 'Fullbay Service',
 			value: b.fullbay_service_id ? (
-				<a
-					href={
-						(import.meta.env.VITE_FULLBAY_URL as string) ??
-						'https://app.fullbay.com'
-					}
-					target='_blank'
-					rel='noreferrer'
-					className='text-sky-600 underline'
+				<button
+					type='button'
+					onClick={() => {
+						void navigator.clipboard.writeText(b.fullbay_service_id || '')
+						success('Fullbay Service ID copied')
+					}}
+					className='inline-flex items-center gap-2 text-slate-700 hover:text-slate-900'
+					title='Copy Fullbay Service ID'
 				>
-					{b.fullbay_service_id}
-				</a>
+					<span className='underline'>{b.fullbay_service_id}</span>
+					<DocumentDuplicateIcon className='h-4 w-4' />
+				</button>
 			) : (
 				'—'
 			),
@@ -144,7 +161,7 @@ export default function BookingDetailsPage() {
 
 	return (
 		<CustomDetailsPage
-			title={`Booking #${b.number || b.id.slice(0, 6)}`}
+			title={b.title ? b.title : `Booking #${b.number || b.id.slice(0, 6)}`}
 			subtitle='Booking'
 			rows={rows}
 			tabs={['general', 'logs']}

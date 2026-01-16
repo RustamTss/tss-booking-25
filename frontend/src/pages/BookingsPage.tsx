@@ -2,16 +2,21 @@ import {
 	ArrowDownTrayIcon,
 	ArrowPathIcon,
 	CheckCircleIcon,
+	DocumentDuplicateIcon,
+	FunnelIcon,
 	PencilSquareIcon,
 	TrashIcon,
 	XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import moment from 'moment-timezone'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { getErrorMessage } from '../api/errors'
+import { playBookingSound, playGoneSound, playReadySound } from '../audio'
 import BookingQuickModal from '../components/quickAddModals/BookingQuickModal'
+import CustomAutocomplete from '../components/shared/CustomAutocomplete'
 import CustomSelect, { type Option } from '../components/shared/CustomSelect'
 import CustomTable, { type Column } from '../components/shared/CustomTable'
 import ConfirmDeleteModal from '../components/shared/ui/ConfirmDeleteModal'
@@ -19,6 +24,7 @@ import CreateButton from '../components/shared/ui/CreateButton'
 import CustomTooltip from '../components/shared/ui/CustomTooltip'
 import { useToast } from '../components/shared/ui/ToastProvider'
 import { useAuth } from '../context/AuthContext'
+import useDebounce from '../hooks/useDebounce'
 import { BUSINESS_TZ } from '../timezone'
 import type {
 	Bay,
@@ -65,6 +71,7 @@ function BookingsPage() {
 		start: '',
 		end: '',
 		company_id: '',
+		service_writer_id: '' as string | undefined,
 	})
 	const baysQuery = useQuery({
 		queryKey: ['bays'],
@@ -88,6 +95,79 @@ function BookingsPage() {
 	const [filterCompany, setFilterCompany] = useState<string>('')
 	const [filterUnit, setFilterUnit] = useState<string>('')
 	const [filterStatus, setFilterStatus] = useState<string>('')
+	const [filterServiceWriter, setFilterServiceWriter] = useState<string>('')
+	const [showFilters, setShowFilters] = useState(false)
+	const [bookingIdRaw, setBookingIdRaw] = useState('')
+	const qBooking = useDebounce(bookingIdRaw, 300)
+	// Remote searchable options for filters
+	const [companyQ, setCompanyQ] = useState('')
+	const [unitQ, setUnitQ] = useState('')
+	const [serviceWriterQ, setServiceWriterQ] = useState('')
+	const debCompanyQ = useDebounce(companyQ, 300)
+	const debUnitQ = useDebounce(unitQ, 300)
+	const debServiceWriterQ = useDebounce(serviceWriterQ, 300)
+	const [companyRemote, setCompanyRemote] = useState<
+		Array<{ id: string; name: string }>
+	>([])
+	const [unitRemote, setUnitRemote] = useState<
+		Array<{ id: string; label: string; company_id?: string }>
+	>([])
+	const [swRemote, setSwRemote] = useState<Array<{ id: string; name: string }>>(
+		[]
+	)
+	// Fetch remote companies
+	useEffect(() => {
+		const run = async () => {
+			const res = await api.get<Array<{ id: string; name: string }>>(
+				'/api/companies',
+				{
+					params: { limit: 10, page: 1, q: debCompanyQ || undefined },
+				}
+			)
+			setCompanyRemote(res.data ?? [])
+		}
+		void run()
+	}, [debCompanyQ])
+	// Fetch remote units (optionally filtered by company)
+	useEffect(() => {
+		const run = async () => {
+			const res = await api.get<
+				Array<{
+					id: string
+					plate: string
+					vin: string
+					nickname?: string
+					company_id?: string
+				}>
+			>('/api/vehicles', {
+				params: {
+					limit: 10,
+					page: 1,
+					q: debUnitQ || undefined,
+					company_id: filterCompany || undefined,
+				},
+			})
+			setUnitRemote(
+				(res.data ?? []).map(v => ({
+					id: v.id,
+					label: v.plate || v.nickname || v.vin || v.id,
+					company_id: v.company_id,
+				}))
+			)
+		}
+		void run()
+	}, [debUnitQ, filterCompany])
+	// Fetch remote service writers
+	useEffect(() => {
+		const run = async () => {
+			const res = await api.get<Array<{ id: string; name: string }>>(
+				'/api/service-writers',
+				{ params: { limit: 10, page: 1, q: debServiceWriterQ || undefined } }
+			)
+			setSwRemote(res.data ?? [])
+		}
+		void run()
+	}, [debServiceWriterQ])
 	const [search, setSearch] = useSearchParams()
 	const page = Math.max(1, Number(search.get('bookings_page') ?? 1))
 	const limit = Math.max(1, Number(search.get('bookings_limit') ?? 10))
@@ -101,6 +181,8 @@ function BookingsPage() {
 				company: filterCompany,
 				unit: filterUnit,
 				status: filterStatus,
+				service_writer: filterServiceWriter,
+				q: qBooking,
 			},
 			page,
 			limit,
@@ -116,6 +198,8 @@ function BookingsPage() {
 			if (filterCompany) params.company_id = filterCompany
 			if (filterUnit) params.vehicle_id = filterUnit
 			if (filterStatus) params.status = filterStatus
+			if (filterServiceWriter) params.service_writer_id = filterServiceWriter
+			if (qBooking) params.q = qBooking
 			const res = await api.get<ListResponse<Booking>>('/api/bookings', {
 				params,
 			})
@@ -151,10 +235,12 @@ function BookingsPage() {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			if (vars.action === 'close') {
 				success('Booking ready')
+				playReadySound()
 			} else if (vars.action === 'cancel') {
 				success('Booking canceled')
 			} else {
 				success('Truck gone')
+				playGoneSound()
 			}
 		},
 		onError: () => error('Failed to update booking status'),
@@ -170,6 +256,7 @@ function BookingsPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
+				service_writer_id: form.service_writer_id || undefined,
 				start: moment
 					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
 					.toDate()
@@ -189,6 +276,7 @@ function BookingsPage() {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			setModalOpen(false)
 			setEditingId(null)
+			playBookingSound()
 			setForm({
 				complaint: '',
 				description: '',
@@ -199,10 +287,17 @@ function BookingsPage() {
 				start: '',
 				end: '',
 				company_id: '',
+				service_writer_id: '',
 			})
 			success('Booking created')
 		},
-		onError: () => error('Failed to create booking'),
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to create booking (bay may be occupied for this time)'
+			)
+			error(msg)
+		},
 	})
 
 	const updateMutation = useMutation({
@@ -215,6 +310,7 @@ function BookingsPage() {
 				bay_id: form.bay_id,
 				technician_ids: form.technician_ids,
 				company_id: form.company_id || undefined,
+				service_writer_id: form.service_writer_id || undefined,
 				start: moment
 					.tz(form.start, 'YYYY-MM-DDTHH:mm', BUSINESS_TZ)
 					.toDate()
@@ -236,7 +332,13 @@ function BookingsPage() {
 			setEditingId(null)
 			success('Booking updated')
 		},
-		onError: () => error('Failed to update booking'),
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to update booking (bay may be occupied for this time)'
+			)
+			error(msg)
+		},
 	})
 
 	const deleteMutation = useMutation({
@@ -256,7 +358,7 @@ function BookingsPage() {
 				render: row => (
 					<NavLink
 						to={`/bookings/${row.id}`}
-						className='font-mono text-slate-900 underline'
+						className='font-mono text-sky-600 underline'
 					>
 						{row.number || row.id.slice(0, 6)}
 					</NavLink>
@@ -272,12 +374,28 @@ function BookingsPage() {
 							{row.complaint || '—'}
 						</div>
 						<div className='text-xs text-slate-600'>{row.description}</div>
+						{row.service_writer_name ? (
+							<div className='text-xs'>
+								<NavLink
+									to={`/service-writers/${row.service_writer_id}`}
+									className='text-sky-600 underline'
+								>
+									{`${row.service_writer_name}'s Booking`}
+								</NavLink>
+							</div>
+						) : null}
 						<div className='text-xs text-slate-500'>
 							Unit:{' '}
-							{row.unit_label ||
-								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.plate ||
-								vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.vin ||
-								row.vehicle_id}
+							<NavLink
+								to={`/vehicles/${row.vehicle_id}`}
+								className='text-sky-600 underline'
+							>
+								{row.unit_label ||
+									vehiclesQuery.data?.find(v => v.id === row.vehicle_id)
+										?.plate ||
+									vehiclesQuery.data?.find(v => v.id === row.vehicle_id)?.vin ||
+									row.vehicle_id}
+							</NavLink>
 						</div>
 					</div>
 				),
@@ -335,6 +453,7 @@ function BookingsPage() {
 										start: formatForInput(new Date(row.start)),
 										end: row.end ? formatForInput(new Date(row.end)) : '',
 										company_id: row.company_id ?? '',
+										service_writer_id: row.service_writer_id ?? '',
 									})
 									setModalOpen(true)
 								}}
@@ -407,24 +526,24 @@ function BookingsPage() {
 				header: 'Fullbay',
 				render: row =>
 					row.fullbay_service_id ? (
-						<a
-							href={
-								(import.meta.env.VITE_FULLBAY_URL as string) ??
-								'https://app.fullbay.com'
-							}
-							target='_blank'
-							rel='noreferrer'
-							className='text-xs text-slate-700 underline underline-offset-2'
-							title='Open in Fullbay'
+						<button
+							type='button'
+							onClick={() => {
+								void navigator.clipboard.writeText(row.fullbay_service_id || '')
+								success('Fullbay Service ID copied')
+							}}
+							className='inline-flex items-center gap-1 text-xs text-slate-700 hover:text-slate-900'
+							title='Copy Fullbay Service ID'
 						>
-							{row.fullbay_service_id}
-						</a>
+							<span>{row.fullbay_service_id}</span>
+							<DocumentDuplicateIcon className='h-4 w-4' />
+						</button>
 					) : (
 						<span className='text-xs text-slate-400'>—</span>
 					),
 			},
 		],
-		[baysQuery.data, vehiclesQuery.data, mutation, role]
+		[baysQuery.data, vehiclesQuery.data, mutation, role, success]
 	)
 
 	const bayOptions = useMemo<Option<string>[]>(
@@ -440,13 +559,6 @@ function BookingsPage() {
 				(techniciansQuery.data ?? []).map(t => ({ label: t.name, value: t.id }))
 			),
 		[techniciansQuery.data]
-	)
-	const companyOptions = useMemo<Option<string>[]>(
-		() =>
-			([{ label: 'All companies', value: '' }] as Option<string>[]).concat(
-				(companiesQuery.data ?? []).map(c => ({ label: c.name, value: c.id }))
-			),
-		[companiesQuery.data]
 	)
 	const unitOptions = useMemo<Option<string>[]>(
 		() =>
@@ -500,6 +612,16 @@ function BookingsPage() {
 				<div className='flex items-center gap-2'>
 					<button
 						type='button'
+						onClick={() => setShowFilters(v => !v)}
+						className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+						aria-label='Filters'
+						title='Filters'
+					>
+						<FunnelIcon className='h-4 w-4' />
+						Filters
+					</button>
+					<button
+						type='button'
 						onClick={handleExport}
 						className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
 						title='Download CSV'
@@ -520,6 +642,7 @@ function BookingsPage() {
 								start: '',
 								end: '',
 								company_id: '',
+								service_writer_id: '',
 							})
 							setModalOpen(true)
 						}}
@@ -529,72 +652,182 @@ function BookingsPage() {
 				</div>
 			</div>
 
-			{/* Filters row similar to Calendar */}
-			<div className='flex flex-wrap items-center gap-2 justify-end'>
-				<div className='w-44'>
-					<CustomSelect
-						placeholder='All companies'
-						options={companyOptions}
-						value={
-							companyOptions.find(o => o.value === filterCompany) ??
-							companyOptions[0]
-						}
-						onChange={opt => setFilterCompany(opt.value)}
-					/>
+			{/* Filters panel */}
+			<div
+				className={`transition-all duration-200 ${
+					showFilters
+						? 'max-h-[800px] opacity-100 overflow-visible'
+						: 'max-h-0 opacity-0 overflow-hidden'
+				}`}
+			>
+				<div className='mt-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+					<div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
+						<label className='block text-sm'>
+							<div className='mb-1 font-medium text-slate-700'>Booking ID</div>
+							<input
+								type='text'
+								value={bookingIdRaw}
+								onChange={e => setBookingIdRaw(e.target.value)}
+								placeholder='Search number or ID...'
+								className='w-full rounded-md border border-slate-300 px-3 py-2 text-sm'
+							/>
+						</label>
+						<CustomAutocomplete<string>
+							label='Company'
+							value={
+								filterCompany
+									? {
+											label:
+												companyRemote.find(c => c.id === filterCompany)?.name ||
+												companiesQuery.data?.find(c => c.id === filterCompany)
+													?.name ||
+												'',
+											value: filterCompany,
+									  }
+									: undefined
+							}
+							onChange={opt => {
+								setFilterCompany(opt.value)
+								setUnitQ('') // reset unit query on company change
+								setFilterUnit('')
+							}}
+							options={[
+								{ label: '— All companies —', value: '' },
+								...Array.from(
+									new Map(
+										[
+											...(companyRemote ?? []),
+											...(companiesQuery.data ?? []),
+										].map(c => [c.id, { label: c.name, value: c.id }])
+									).values()
+								),
+							]}
+							onQueryChange={setCompanyQ}
+							placeholder='Search companies...'
+						/>
+						<CustomAutocomplete<string>
+							label='Unit'
+							value={
+								filterUnit
+									? {
+											label:
+												unitRemote.find(u => u.id === filterUnit)?.label ||
+												unitOptions.find(o => o.value === filterUnit)?.label ||
+												'',
+											value: filterUnit,
+									  }
+									: undefined
+							}
+							onChange={opt => setFilterUnit(opt.value)}
+							options={[
+								{ label: '— All units —', value: '' },
+								...Array.from(
+									new Map(
+										[
+											...(unitRemote ?? []).map(u => ({
+												id: u.id,
+												name: u.label,
+											})),
+											...(vehiclesQuery.data ?? []).map(v => ({
+												id: v.id,
+												name: v.plate || v.vin || v.id,
+											})),
+										].map(c => [c.id, { label: c.name, value: c.id }])
+									).values()
+								),
+							]}
+							onQueryChange={setUnitQ}
+							placeholder='Search units...'
+						/>
+						<div>
+							<CustomSelect
+								placeholder='All bays'
+								options={bayOptions}
+								value={
+									bayOptions.find(o => o.value === filterBay) ?? bayOptions[0]
+								}
+								onChange={opt => setFilterBay(opt.value)}
+							/>
+						</div>
+						<div>
+							<CustomSelect
+								placeholder='All technicians'
+								options={techOptions}
+								value={
+									techOptions.find(o => o.value === filterTech) ??
+									techOptions[0]
+								}
+								onChange={opt => setFilterTech(opt.value)}
+							/>
+						</div>
+						<div>
+							<CustomSelect
+								placeholder='All statuses'
+								options={statusOptions}
+								value={
+									statusOptions.find(o => o.value === filterStatus) ??
+									statusOptions[0]
+								}
+								onChange={opt => setFilterStatus(opt.value)}
+							/>
+						</div>
+						<CustomAutocomplete<string>
+							label='Service writer'
+							value={
+								filterServiceWriter
+									? {
+											label:
+												swRemote.find(s => s.id === filterServiceWriter)
+													?.name || '',
+											value: filterServiceWriter,
+									  }
+									: undefined
+							}
+							onChange={opt => setFilterServiceWriter(opt.value)}
+							options={[
+								{ label: '— All service writers —', value: '' },
+								...Array.from(
+									new Map(
+										[...(swRemote ?? [])].map(s => [
+											s.id,
+											{ label: s.name, value: s.id },
+										])
+									).values()
+								),
+							]}
+							onQueryChange={setServiceWriterQ}
+							placeholder='Search service writers...'
+						/>
+					</div>
+					<div className='mt-4 flex items-center justify-end gap-2'>
+						<button
+							type='button'
+							onClick={() => {
+								setFilterBay('')
+								setFilterTech('')
+								setFilterCompany('')
+								setFilterUnit('')
+								setFilterStatus('')
+								setFilterServiceWriter('')
+								setBookingIdRaw('')
+								setCompanyQ('')
+								setUnitQ('')
+								setServiceWriterQ('')
+							}}
+							className='inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50'
+						>
+							<ArrowPathIcon className='h-4 w-4' />
+							Reset
+						</button>
+						<button
+							type='button'
+							onClick={() => setShowFilters(false)}
+							className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+						>
+							Apply filters
+						</button>
+					</div>
 				</div>
-				<div className='w-48'>
-					<CustomSelect
-						placeholder='All units'
-						options={unitOptions}
-						value={
-							unitOptions.find(o => o.value === filterUnit) ?? unitOptions[0]
-						}
-						onChange={opt => setFilterUnit(opt.value)}
-					/>
-				</div>
-				<div className='w-40'>
-					<CustomSelect
-						placeholder='All bays'
-						options={bayOptions}
-						value={bayOptions.find(o => o.value === filterBay) ?? bayOptions[0]}
-						onChange={opt => setFilterBay(opt.value)}
-					/>
-				</div>
-				<div className='w-52'>
-					<CustomSelect
-						placeholder='All technicians'
-						options={techOptions}
-						value={
-							techOptions.find(o => o.value === filterTech) ?? techOptions[0]
-						}
-						onChange={opt => setFilterTech(opt.value)}
-					/>
-				</div>
-				<div className='w-36'>
-					<CustomSelect
-						placeholder='All statuses'
-						options={statusOptions}
-						value={
-							statusOptions.find(o => o.value === filterStatus) ??
-							statusOptions[0]
-						}
-						onChange={opt => setFilterStatus(opt.value)}
-					/>
-				</div>
-				<button
-					type='button'
-					onClick={() => {
-						setFilterBay('')
-						setFilterTech('')
-						setFilterCompany('')
-						setFilterUnit('')
-						setFilterStatus('')
-					}}
-					className='inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
-				>
-					<ArrowPathIcon className='h-4 w-4' />
-					Reset
-				</button>
 			</div>
 
 			<CustomTable

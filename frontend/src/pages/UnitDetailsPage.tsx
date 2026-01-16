@@ -39,7 +39,7 @@ export default function UnitDetailsPage() {
 		{ label: 'Company', value: companyLink },
 		{ label: 'Type', value: unit.type.toUpperCase() },
 		{ label: 'VIN', value: unit.vin || '—' },
-		{ label: 'Plate', value: unit.plate || '—' },
+		{ label: 'Unit #', value: unit.plate || '—' },
 		{ label: 'Make', value: unit.make || '—' },
 		{ label: 'Model', value: unit.model || '—' },
 		{ label: 'Year', value: String(unit.year) },

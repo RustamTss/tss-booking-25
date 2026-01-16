@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"strings"
+
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/tss-booking-system/backend/models"
@@ -106,6 +110,34 @@ func (h *Handler) ListVehicles(c *fiber.Ctx) error {
 			Vehicle:     v,
 			CompanyName: nameByID[v.CompanyID],
 		})
+	}
+	// CSV export
+	if exp := strings.ToLower(c.Query("export")); exp == "csv" || exp == "excel" {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.Write([]string{"type", "unit", "vin", "year", "make", "model", "company"})
+		for _, v := range out {
+			unit := v.Plate
+			if unit == "" {
+				unit = v.Nickname
+			}
+			if unit == "" {
+				unit = v.VIN
+			}
+			_ = w.Write([]string{
+				string(v.Type),
+				unit,
+				v.VIN,
+				func(y int) string { return strconv.Itoa(y) }(v.Year),
+				v.Make,
+				v.Model,
+				v.CompanyName,
+			})
+		}
+		w.Flush()
+		c.Set("Content-Type", "text/csv")
+		c.Set("Content-Disposition", "attachment; filename=\"units.csv\"")
+		return c.Send(buf.Bytes())
 	}
 	// total for pagination envelope
 	total, err := h.DB.Collection(vehicleCollection).CountDocuments(h.ctx(c), filter)

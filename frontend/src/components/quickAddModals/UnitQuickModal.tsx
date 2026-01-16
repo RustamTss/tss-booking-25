@@ -180,10 +180,10 @@ export default function UnitQuickModal({
 					placeholder='VIN'
 				/>
 				<CustomInput
-					label='Plate'
+					label='Unit #'
 					value={form.plate}
 					onChange={v => onChange({ plate: v })}
-					placeholder='Plate'
+					placeholder='Unit #'
 				/>
 				<CustomInput
 					label='Make'

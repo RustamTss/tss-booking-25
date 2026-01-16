@@ -12,6 +12,7 @@ import {
 	Route,
 	Routes,
 } from 'react-router-dom'
+import { playRequestSound } from './audio'
 import AppHeader from './components/shared/layout/AppHeader.tsx'
 import { ToastProvider, useToast } from './components/shared/ui/ToastProvider'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -28,6 +29,8 @@ import LogsPage from './pages/LogsPage'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RequestDetailsPage from './pages/RequestDetailsPage'
 import RequestsPage from './pages/RequestsPage'
+import ServiceWriterDetailsPage from './pages/ServiceWriterDetailsPage'
+import ServiceWritersPage from './pages/ServiceWritersPage'
 import SettingsPage from './pages/SettingsPage'
 import TechnicianDetailsPage from './pages/TechnicianDetailsPage'
 import TechniciansPage from './pages/TechniciansPage'
@@ -72,15 +75,19 @@ function WsBridge() {
 					if (msg?.type?.startsWith('request.')) {
 						client.invalidateQueries({ queryKey: ['requests'] })
 						client.invalidateQueries({ queryKey: ['requests-new-count'] })
-						const r = msg?.data
-						if (r && r.company_name) {
-							success(
-								`New request: ${r.company_name}${
-									r.unit_number ? ' • ' + r.unit_number : ''
-								}`
-							)
-						} else {
-							success('New request received')
+						// Only notify on brand new incoming requests, not updates
+						if (msg?.type === 'request.created') {
+							const r = msg?.data
+							if (r && r.company_name) {
+								success(
+									`New request: ${r.company_name}${
+										r.unit_number ? ' • ' + r.unit_number : ''
+									}`
+								)
+							} else {
+								success('New request received')
+							}
+							playRequestSound()
 						}
 					}
 				} catch {
@@ -143,6 +150,14 @@ function App() {
 								<Route
 									path='/technicians/:id'
 									element={<TechnicianDetailsPage />}
+								/>
+								<Route
+									path='/service-writers'
+									element={<ServiceWritersPage />}
+								/>
+								<Route
+									path='/service-writers/:id'
+									element={<ServiceWriterDetailsPage />}
 								/>
 								<Route path='/bays' element={<BaysPage />} />
 								<Route path='/bays/:id' element={<BayDetailsPage />} />

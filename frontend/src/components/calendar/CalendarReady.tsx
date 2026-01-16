@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { playGoneSound } from '../../audio'
 import type { Booking } from '../../types'
 
 interface CalendarReadyProps {
@@ -28,6 +29,7 @@ function CalendarReady({ from, to, onSelect }: CalendarReadyProps) {
 			queryClient.invalidateQueries({ queryKey: ['bookings'] })
 			queryClient.invalidateQueries({ queryKey: ['agenda'] })
 			queryClient.invalidateQueries({ queryKey: ['bay-occupancy'] })
+			playGoneSound()
 		},
 	})
 	// Labels now come denormalized from backend (unit_label, bay_name)

@@ -6,12 +6,14 @@ type Props = {
 	content: string
 	children: React.ReactNode
 	placement?: 'top' | 'bottom'
+	className?: string
 }
 
 export default function CustomTooltip({
 	content,
 	children,
 	placement = 'top',
+	className,
 }: Props) {
 	const [open, setOpen] = useState(false)
 	const isTop = placement === 'top'
@@ -43,7 +45,7 @@ export default function CustomTooltip({
 	return (
 		<span
 			ref={anchorRef}
-			className='relative inline-block'
+			className={`relative inline-block${className ? ` ${className}` : ''}`}
 			onMouseEnter={() => setOpen(true)}
 			onMouseLeave={() => setOpen(false)}
 			onFocus={() => setOpen(true)}

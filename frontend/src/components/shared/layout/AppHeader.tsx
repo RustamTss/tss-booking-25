@@ -112,6 +112,19 @@ export default function AppHeader() {
 									<Menu.Item>
 										{({ active }) => (
 											<Link
+												to='/service-writers'
+												className={`flex items-center gap-2 px-3 py-2 ${
+													active ? 'bg-slate-100' : ''
+												}`}
+											>
+												<UserIcon className='h-4 w-4' />
+												Service writers
+											</Link>
+										)}
+									</Menu.Item>
+									<Menu.Item>
+										{({ active }) => (
+											<Link
 												to='/bays'
 												className={`flex items-center gap-2 px-3 py-2 ${
 													active ? 'bg-slate-100' : ''

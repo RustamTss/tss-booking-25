@@ -26,6 +26,7 @@ type bookingRequest struct {
 	BayID            string               `json:"bay_id"`
 	TechnicianIDs    []string             `json:"technician_ids"`
 	CompanyID        string               `json:"company_id"`
+	ServiceWriterID  string               `json:"service_writer_id"`
 	Start            time.Time            `json:"start"`
 	End              *time.Time           `json:"end"`
 	Status           models.BookingStatus `json:"status"`
@@ -34,10 +35,11 @@ type bookingRequest struct {
 
 // bookingOut adds denormalized labels for UI convenience
 type bookingOut struct {
-	models.Booking `bson:",inline" json:",inline"`
-	UnitLabel      string `json:"unit_label,omitempty"`
-	CompanyName    string `json:"company_name,omitempty"`
-	BayName        string `json:"bay_name,omitempty"`
+	models.Booking    `bson:",inline" json:",inline"`
+	UnitLabel         string `json:"unit_label,omitempty"`
+	CompanyName       string `json:"company_name,omitempty"`
+	BayName           string `json:"bay_name,omitempty"`
+	ServiceWriterName string `json:"service_writer_name,omitempty"`
 }
 
 // enrichBookings resolves unit (plate/nickname/VIN), company and bay names.
@@ -48,16 +50,24 @@ func (h *Handler) enrichBookings(c *fiber.Ctx, items []models.Booking) []booking
 	vehicleIDs := make([]primitive.ObjectID, 0, len(items))
 	bayIDs := make([]primitive.ObjectID, 0, len(items))
 	companyIDSet := map[primitive.ObjectID]struct{}{}
+	swIDSet := map[primitive.ObjectID]struct{}{}
 	for _, b := range items {
 		vehicleIDs = append(vehicleIDs, b.VehicleID)
 		bayIDs = append(bayIDs, b.BayID)
 		if b.CompanyID != primitive.NilObjectID {
 			companyIDSet[b.CompanyID] = struct{}{}
 		}
+		if b.ServiceWriterID != primitive.NilObjectID {
+			swIDSet[b.ServiceWriterID] = struct{}{}
+		}
 	}
 	companyIDs := make([]primitive.ObjectID, 0, len(companyIDSet))
 	for id := range companyIDSet {
 		companyIDs = append(companyIDs, id)
+	}
+	swIDs := make([]primitive.ObjectID, 0, len(swIDSet))
+	for id := range swIDSet {
+		swIDs = append(swIDs, id)
 	}
 	vehicleLabels := map[primitive.ObjectID]string{}
 	if len(vehicleIDs) > 0 {
@@ -99,14 +109,32 @@ func (h *Handler) enrichBookings(c *fiber.Ctx, items []models.Booking) []booking
 			}
 		}
 	}
+	swNames := map[primitive.ObjectID]string{}
+	if len(swIDs) > 0 {
+		cur, _ := h.DB.Collection(serviceWriterCollection).Find(h.ctx(c), bson.M{"_id": bson.M{"$in": swIDs}})
+		defer cur.Close(h.ctx(c))
+		for cur.Next(h.ctx(c)) {
+			var sw models.ServiceWriter
+			if err := cur.Decode(&sw); err == nil {
+				swNames[sw.ID] = sw.Name
+			}
+		}
+	}
 	out := make([]bookingOut, 0, len(items))
 	for _, b := range items {
-		out = append(out, bookingOut{
+		o := bookingOut{
 			Booking:     b,
 			UnitLabel:   vehicleLabels[b.VehicleID],
 			CompanyName: companyNames[b.CompanyID],
 			BayName:     bayNames[b.BayID],
-		})
+		}
+		if b.ServiceWriterID != primitive.NilObjectID {
+			o.ServiceWriterName = swNames[b.ServiceWriterID]
+			if o.ServiceWriterName != "" {
+				o.Title = fmt.Sprintf("%s's Booking", o.ServiceWriterName)
+			}
+		}
+		out = append(out, o)
 	}
 	return out
 }
@@ -147,6 +175,13 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid bay_id")
 		}
 	}
+	if v := c.Query("service_writer_id"); v != "" {
+		if id, err := asObjectID(v); err == nil {
+			filter["service_writer_id"] = id
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid service_writer_id")
+		}
+	}
 	if v := c.Query("status"); v != "" {
 		filter["status"] = models.BookingStatus(v)
 	}
@@ -156,6 +191,25 @@ func (h *Handler) ListBookings(c *fiber.Ctx) error {
 		} else {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid technician_id")
 		}
+	}
+	// Search by booking number (contains, numeric with leading zeros) or ObjectID
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		ors := []bson.M{{"number": bson.M{"$regex": q, "$options": "i"}}}
+		// If q is digits, match ignoring leading zeros, e.g. "185" -> "^0*185$"
+		isDigits := true
+		for _, ch := range q {
+			if ch < '0' || ch > '9' {
+				isDigits = false
+				break
+			}
+		}
+		if isDigits {
+			ors = append(ors, bson.M{"number": bson.M{"$regex": "^0*" + q + "$"}})
+		}
+		if oid, err := primitive.ObjectIDFromHex(q); err == nil {
+			ors = append(ors, bson.M{"_id": oid})
+		}
+		filter["$or"] = ors
 	}
 	limit := int64(c.QueryInt("limit", 50))
 	if limit <= 0 {
@@ -368,6 +422,13 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid company_id")
 		}
 	}
+	var serviceWriterID primitive.ObjectID
+	if req.ServiceWriterID != "" {
+		serviceWriterID, err = asObjectID(req.ServiceWriterID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid service_writer_id")
+		}
+	}
 	technicianIDs, err := parseObjectIDs(req.TechnicianIDs)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid technician_ids")
@@ -390,6 +451,7 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 		BayID:            bayID,
 		TechnicianIDs:    technicianIDs,
 		CompanyID:        companyID,
+		ServiceWriterID:  serviceWriterID,
 		Start:            req.Start.In(h.TZ),
 		End:              req.End,
 		Status:           status,
@@ -533,6 +595,13 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid company_id")
 		}
 	}
+	var serviceWriterID primitive.ObjectID
+	if req.ServiceWriterID != "" {
+		serviceWriterID, err = asObjectID(req.ServiceWriterID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid service_writer_id")
+		}
+	}
 	technicianIDs, err := parseObjectIDs(req.TechnicianIDs)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid technician_ids")
@@ -555,6 +624,7 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 	updatedBooking.BayID = bayID
 	updatedBooking.TechnicianIDs = technicianIDs
 	updatedBooking.CompanyID = companyID
+	updatedBooking.ServiceWriterID = serviceWriterID
 	updatedBooking.Start = req.Start.In(h.TZ)
 	updatedBooking.End = req.End
 	if req.Status != "" {
@@ -580,22 +650,31 @@ func (h *Handler) UpdateBooking(c *fiber.Ctx) error {
 		}
 	}
 
+	// Build update document with conditional end handling:
+	// - if End is provided -> $set end
+	// - if End is empty    -> $unset end (so occupancy queries treat it as open)
+	set := bson.M{
+		"title":              updatedBooking.Title,
+		"complaint":          updatedBooking.Complaint,
+		"description":        updatedBooking.Description,
+		"vehicle_id":         updatedBooking.VehicleID,
+		"fullbay_service_id": updatedBooking.FullbayServiceID,
+		"bay_id":             updatedBooking.BayID,
+		"technician_ids":     updatedBooking.TechnicianIDs,
+		"company_id":         updatedBooking.CompanyID,
+		"service_writer_id":  updatedBooking.ServiceWriterID,
+		"start":              updatedBooking.Start,
+		"status":             updatedBooking.Status,
+		"notes":              updatedBooking.Notes,
+		"updated_at":         updatedBooking.UpdatedAt,
+	}
 	update := bson.M{
-		"$set": bson.M{
-			"title":              updatedBooking.Title,
-			"complaint":          updatedBooking.Complaint,
-			"description":        updatedBooking.Description,
-			"vehicle_id":         updatedBooking.VehicleID,
-			"fullbay_service_id": updatedBooking.FullbayServiceID,
-			"bay_id":             updatedBooking.BayID,
-			"technician_ids":     updatedBooking.TechnicianIDs,
-			"company_id":         updatedBooking.CompanyID,
-			"start":              updatedBooking.Start,
-			"end":                updatedBooking.End,
-			"status":             updatedBooking.Status,
-			"notes":              updatedBooking.Notes,
-			"updated_at":         updatedBooking.UpdatedAt,
-		},
+		"$set": set,
+	}
+	if updatedBooking.End != nil {
+		set["end"] = updatedBooking.End
+	} else {
+		update["$unset"] = bson.M{"end": ""}
 	}
 	if _, err := h.DB.Collection(bookingCollection).UpdateByID(h.ctx(c), id, update); err != nil {
 		return fiber.ErrInternalServerError

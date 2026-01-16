@@ -1,6 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/csv"
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/tss-booking-system/backend/models"
 	"go.mongodb.org/mongo-driver/bson"
@@ -8,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
-	"strings"
 )
 
 const (
@@ -165,6 +168,24 @@ func (h *Handler) ListUsers(c *fiber.Ctx) error {
 	if err := cur.All(h.ctx(c), &users); err != nil {
 		return fiber.ErrInternalServerError
 	}
+	// CSV export
+	if exp := strings.ToLower(c.Query("export")); exp == "csv" || exp == "excel" {
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
+		_ = w.Write([]string{"email", "role", "status", "created_at"})
+		for _, u := range users {
+			_ = w.Write([]string{
+				u.Email,
+				string(u.Role),
+				u.Status,
+				u.CreatedAt.In(h.TZ).Format("01/02/2006, 03:04 PM"),
+			})
+		}
+		w.Flush()
+		c.Set("Content-Type", "text/csv")
+		c.Set("Content-Disposition", "attachment; filename=\"users.csv\"")
+		return c.Send(buf.Bytes())
+	}
 	if strings.ToLower(c.Query("envelope")) == "1" || strings.ToLower(c.Query("envelope")) == "true" {
 		total, err := h.DB.Collection(userCollection).CountDocuments(h.ctx(c), filter)
 		if err != nil {
@@ -174,12 +195,12 @@ func (h *Handler) ListUsers(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"data": users,
 			"pagination": fiber.Map{
-				"total":        total,
-				"page":         page,
-				"limit":        limit,
-				"totalPages":   totalPages,
-				"hasNextPage":  page < totalPages,
-				"hasPrevPage":  page > 1,
+				"total":       total,
+				"page":        page,
+				"limit":       limit,
+				"totalPages":  totalPages,
+				"hasNextPage": page < totalPages,
+				"hasPrevPage": page > 1,
 			},
 		})
 	}

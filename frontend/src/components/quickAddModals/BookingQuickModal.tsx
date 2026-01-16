@@ -20,6 +20,7 @@ type BookingForm = {
 	vehicle_id: string
 	bay_id: string
 	company_id: string
+	service_writer_id?: string
 	technician_ids: string[]
 	start: string
 	end: string
@@ -55,8 +56,12 @@ export default function BookingQuickModal({
 	// Remote search state for units and companies (limit 10)
 	const [unitOptions, setUnitOptions] = useState<Option[]>([])
 	const [companyOptions, setCompanyOptions] = useState<Option[]>([])
+	const [serviceWriterOptions, setServiceWriterOptions] = useState<
+		{ id: string; name: string }[]
+	>([])
 	const [unitQuery, setUnitQuery] = useState('')
 	const [companyQuery, setCompanyQuery] = useState('')
+	const [serviceWriterQuery, setServiceWriterQuery] = useState('')
 
 	// debounce helper
 	const useDebounce = (value: string, delay: number) => {
@@ -69,6 +74,7 @@ export default function BookingQuickModal({
 	}
 	const debouncedUnitQ = useDebounce(unitQuery, 250)
 	const debouncedCompanyQ = useDebounce(companyQuery, 250)
+	const debouncedServiceWriterQ = useDebounce(serviceWriterQuery, 250)
 
 	useEffect(() => {
 		const fetchUnits = async () => {
@@ -125,10 +131,27 @@ export default function BookingQuickModal({
 		void fetchCompanies()
 	}, [debouncedCompanyQ])
 
+	useEffect(() => {
+		const fetchSW = async () => {
+			const q = debouncedServiceWriterQ.trim()
+			if (q.length === 0 || q.length >= 1) {
+				const res = await api.get<{ id: string; name: string }[]>(
+					'/api/service-writers',
+					{
+						params: { limit: 10, page: 1, q: q.length >= 1 ? q : undefined },
+					}
+				)
+				setServiceWriterOptions(res.data ?? [])
+			}
+		}
+		void fetchSW()
+	}, [debouncedServiceWriterQ])
+
 	// initial load (first page)
 	useEffect(() => {
 		setUnitQuery('')
 		setCompanyQuery('')
+		setServiceWriterQuery('')
 	}, [isOpen])
 
 	return (
@@ -171,6 +194,31 @@ export default function BookingQuickModal({
 					onChange={v => onChange({ complaint: v })}
 					placeholder='E.g., vibration at 60 mph'
 					autoFocus
+				/>
+				<CustomAutocomplete<string>
+					label='Service writer (optional)'
+					value={
+						form.service_writer_id
+							? {
+									label:
+										serviceWriterOptions.find(
+											s => s.id === form.service_writer_id
+										)?.name || '',
+									value: form.service_writer_id,
+							  }
+							: undefined
+					}
+					onChange={opt =>
+						onChange({
+							service_writer_id: opt.value || undefined,
+						})
+					}
+					options={[
+						{ label: '— Clear —', value: '' },
+						...serviceWriterOptions.map(s => ({ label: s.name, value: s.id })),
+					]}
+					onQueryChange={q => setServiceWriterQuery(q)}
+					placeholder='Select service writer'
 				/>
 				<CustomInput
 					label='Description'

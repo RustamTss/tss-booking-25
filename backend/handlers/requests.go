@@ -130,6 +130,16 @@ func (h *Handler) ListRequests(c *fiber.Ctx) error {
 	if v := strings.TrimSpace(c.Query("status")); v != "" {
 		filter["status"] = models.RequestStatus(v)
 	}
+	// free text search
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		filter["$or"] = []bson.M{
+			{"driver_name": bson.M{"$regex": q, "$options": "i"}},
+			{"phone": bson.M{"$regex": q, "$options": "i"}},
+			{"company_name": bson.M{"$regex": q, "$options": "i"}},
+			{"unit_number": bson.M{"$regex": q, "$options": "i"}},
+			{"username": bson.M{"$regex": q, "$options": "i"}},
+		}
+	}
 	limit := int64(c.QueryInt("limit", 50))
 	if limit <= 0 {
 		limit = 50
@@ -224,5 +234,21 @@ func (h *Handler) UpdateRequest(c *fiber.Ctx) error {
 		return fiber.ErrNotFound
 	}
 	pushRealtime(models.RealtimeEvent{Type: "request.updated", Data: id.Hex()})
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// DeleteRequest removes a request (admin only)
+func (h *Handler) DeleteRequest(c *fiber.Ctx) error {
+	id, err := asObjectID(c.Params("id"))
+	if err != nil {
+		return fiber.ErrBadRequest
+	}
+	res, err := h.DB.Collection(requestCollection).DeleteOne(h.ctx(c), bson.M{"_id": id})
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	if res.DeletedCount == 0 {
+		return fiber.ErrNotFound
+	}
 	return c.SendStatus(fiber.StatusNoContent)
 }

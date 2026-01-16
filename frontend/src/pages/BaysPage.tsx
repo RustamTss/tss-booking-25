@@ -1,4 +1,4 @@
-import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowDownTrayIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
@@ -104,6 +104,20 @@ function BaysPage() {
 		setModalOpen(true)
 	}
 
+	async function handleExport() {
+		const params: Record<string, string> = { export: 'csv' }
+		if (q) params.q = q
+		const res = await api.get('/api/bays', { params, responseType: 'blob' })
+		const url = window.URL.createObjectURL(new Blob([res.data]))
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `bays-${Date.now()}.csv`
+		document.body.appendChild(a)
+		a.click()
+		a.remove()
+		window.URL.revokeObjectURL(url)
+	}
+
 	const columns: Array<Column<Bay & { actions?: null }>> = [
 		{
 			key: 'name',
@@ -160,6 +174,15 @@ function BaysPage() {
 						placeholder='Search bays...'
 						className='w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
 					/>
+					<button
+						type='button'
+						onClick={handleExport}
+						className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+						title='Download CSV'
+					>
+						<ArrowDownTrayIcon className='h-4 w-4' />
+						Export
+					</button>
 					{role === 'admin' && (
 						<CreateButton onClick={openCreate}>Create Bay</CreateButton>
 					)}

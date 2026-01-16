@@ -6,12 +6,15 @@ import truckGreen from '../../assets/frontal-truck-green.png'
 import truckOrange from '../../assets/frontal-truck-orange.png'
 // red icon no longer used for available state; keep imports minimal
 import moment from 'moment-timezone'
+import { getErrorMessage } from '../../api/errors'
 import truckGray from '../../assets/frontal-truck-gray.png'
+import { playBookingSound } from '../../audio'
 import { BUSINESS_TZ } from '../../timezone'
 import type { Bay, Booking, Company, Technician, Vehicle } from '../../types'
 import FullWidthModal from '../calendar/FullWidthModal'
 import BookingQuickModal from '../quickAddModals/BookingQuickModal'
 import CustomTooltip from '../shared/ui/CustomTooltip'
+import { useToast } from '../shared/ui/ToastProvider'
 
 type Occupancy = Record<
 	string,
@@ -76,24 +79,27 @@ export const Truck = ({
 const BLUEPRINT: Array<Array<string | null>> = [
 	// Bay 5 row
 	['OB-5', 'Bay-5-3', 'Bay-5-2', 'Bay-5-1'],
+	// Inner between 4-5 (visual lines only across three slots)
+	['OB-4', 'IB-LINE', 'IB-LINE', 'IB-LINE'],
 	// Bay 4 row
-	['OB-4', 'Bay-4-3', 'Bay-4-2', 'Bay-4-1'],
+	[null, 'Bay-4-3', 'Bay-4-2', 'Bay-4-1'],
 	// Inner between 3-4
-	[null, 'IB(3-4)-3', 'IB(3-4)-2', 'IB(3-4)-1'],
+	['OB-3', 'IB(3-4)-3', 'IB(3-4)-2', 'IB(3-4)-1'],
 	// Bay 3 row
-	['OB-3', 'Bay-3-2', 'Bay-3-1', 'Alignment-Rack'],
+	[null, 'Bay-3-2', 'Bay-3-1', 'Alignment-Rack'],
 	// Inner between 2-3
-	[null, 'IB(2-3)-1', null, null],
+	['OB-2', 'IB(2-3)-1', 'IB-LINE', 'IB-LINE'],
 	// Bay 2 row
-	['OB-2', 'Bay-2-2', 'Bay-2-1', 'Body-Shop'],
+	[null, 'Bay-2-2', 'Bay-2-1', 'Body-Shop'],
 	// Inner between 1-2
-	[null, 'IB(1-2)-1', null, null],
+	['OB-1', 'IB(1-2)-1', 'IB-LINE', 'IB-LINE'],
 	// Bay 1 row
-	['OB-1', 'Bay-1-2', 'Bay-1-1', null],
+	[null, 'Bay-1-2', 'Bay-1-1', null],
 ]
 
 export default function BayDiagram() {
 	const queryClient = useQueryClient()
+	const { error: toastError, success: toastSuccess } = useToast()
 	const [fullscreen, setFullscreen] = useState(false)
 	const baysQuery = useQuery({
 		queryKey: ['bays'],
@@ -258,15 +264,16 @@ export default function BayDiagram() {
 		const bay = bayByName.get(name)
 		const status = getStatusForBay(name)
 		const isInner = name.startsWith('IB(')
-		const showLine = isInner
+		const isLineOnly = name === 'IB-LINE'
+		const showLine = isInner || isLineOnly
 		const label = name
 		const occ = bay ? occupancy[bay.id] : undefined
 		let tooltip = label
-		if (status === 'open' && occ) {
+		if (!isLineOnly && status === 'open' && occ) {
 			tooltip = `#${occ.number} • ${label}\nStart: ${new Date(
 				occ.start
 			).toLocaleString('en-US', { timeZone: BUSINESS_TZ })}`
-		} else if (status === 'ready' && bay) {
+		} else if (!isLineOnly && status === 'ready' && bay) {
 			const rb = (readyQuery.data ?? []).find(x => x.bay_id === bay.id)
 			if (rb) {
 				const when = rb.end
@@ -296,20 +303,25 @@ export default function BayDiagram() {
 				{showLine ? (
 					<div className='absolute left-0 right-0 top-1/2 z-0 h-px -translate-y-1/2 bg-slate-400' />
 				) : null}
-				<button
-					type='button'
-					onClick={handleClick}
-					className='flex flex-col items-center gap-1 focus:outline-none'
-				>
-					<CustomTooltip content={tooltip}>
-						<div>
-							<Truck color={status} />
-						</div>
-					</CustomTooltip>
-					<span className='rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700'>
-						{label}
-					</span>
-				</button>
+				{isLineOnly ? (
+					// visual spacer with line only
+					<div className='h-full w-full' />
+				) : (
+					<button
+						type='button'
+						onClick={handleClick}
+						className='flex flex-col items-center gap-1 focus:outline-none'
+					>
+						<CustomTooltip content={tooltip}>
+							<div>
+								<Truck color={status} />
+							</div>
+						</CustomTooltip>
+						<span className='rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700'>
+							{label}
+						</span>
+					</button>
+				)}
 			</div>
 		)
 	}
@@ -339,9 +351,16 @@ export default function BayDiagram() {
 										<Truck color='waiting' />
 									</div>
 								</CustomTooltip>
-								<span className='text-xs font-medium text-slate-700'>
-									{b.unit_label || 'Unit'}
-								</span>
+								<div className='flex min-w-0 flex-col leading-tight'>
+									<span className='text-xs font-medium text-slate-700'>
+										{b.unit_label || 'Unit'}
+									</span>
+									{b.company_name ? (
+										<span className=' text-[11px] text-slate-600'>
+											{b.company_name}
+										</span>
+									) : null}
+								</div>
 							</button>
 						))}
 						{(waitingQuery.data ?? []).length === 0 ? (
@@ -420,11 +439,19 @@ export default function BayDiagram() {
 			await api.put(`/api/bookings/${editing.id}`, payload)
 		},
 		onSuccess: () => {
+			toastSuccess('Booking updated')
 			setModalOpen(false)
 			// refresh diagram data
 			queryClient.invalidateQueries({ queryKey: ['bay-occupancy'] })
 			queryClient.invalidateQueries({ queryKey: ['calendar-ready-diagram'] })
 			queryClient.invalidateQueries({ queryKey: ['calendar-waiting-diagram'] })
+		},
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to update booking (bay may be occupied for this time)'
+			)
+			toastError(msg)
 		},
 	})
 	const createMutation = useMutation({
@@ -453,10 +480,19 @@ export default function BayDiagram() {
 			await api.post('/api/bookings', payload)
 		},
 		onSuccess: () => {
+			toastSuccess('Booking created')
+			playBookingSound()
 			setModalOpen(false)
 			queryClient.invalidateQueries({ queryKey: ['bay-occupancy'] })
 			queryClient.invalidateQueries({ queryKey: ['calendar-ready-diagram'] })
 			queryClient.invalidateQueries({ queryKey: ['calendar-waiting-diagram'] })
+		},
+		onError: err => {
+			const msg = getErrorMessage(
+				err,
+				'Failed to create booking (bay may be occupied for this time)'
+			)
+			toastError(msg)
 		},
 	})
 

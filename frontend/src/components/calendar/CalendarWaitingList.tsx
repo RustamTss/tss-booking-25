@@ -52,6 +52,11 @@ function CalendarWaitingList({ from, to, onSelect }: CalendarWaitingListProps) {
 							<div className='mt-1 text-[12px] font-medium text-amber-900'>
 								{[item.unit_label, item.bay_name].filter(Boolean).join(' · ')}
 							</div>
+							{item.company_name ? (
+								<div className='text-[11px] text-amber-800'>
+									{item.company_name}
+								</div>
+							) : null}
 						</button>
 					))}
 				</ul>

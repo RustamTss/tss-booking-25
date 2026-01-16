@@ -104,7 +104,7 @@ export default function CompanyUnitsTab({ companyId }: { companyId: string }) {
 	const columns: Array<Column<Row>> = [
 		{
 			key: 'plate',
-			header: 'Plate',
+			header: 'Unit #',
 			render: r => (
 				<NavLink to={`/vehicles/${r.id}`} className='text-sky-600 underline'>
 					{r.plate || '—'}

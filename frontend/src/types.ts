@@ -10,6 +10,15 @@ export interface Technician {
 	updated_at: string
 }
 
+export interface ServiceWriter {
+	id: string
+	name: string
+	phone: string
+	email: string
+	created_at: string
+	updated_at: string
+}
+
 export interface Bay {
 	id: string
 	key: string
@@ -25,6 +34,7 @@ export interface Company {
 	phone: string
 	created_at: string
 	updated_at: string
+	company_units_count?: number
 }
 
 export interface Contact {
@@ -72,6 +82,8 @@ export interface Booking {
 	technician_ids: string[]
 	company_id: string
 	company_name?: string
+	service_writer_id?: string
+	service_writer_name?: string
 	start: string
 	end?: string
 	status: BookingStatus

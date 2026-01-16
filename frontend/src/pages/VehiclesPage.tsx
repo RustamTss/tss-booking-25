@@ -1,4 +1,4 @@
-import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowDownTrayIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
@@ -164,6 +164,23 @@ function VehiclesPage() {
 		setModalOpen(true)
 	}
 
+	async function handleExport() {
+		const params: Record<string, string> = { export: 'csv' }
+		if (q) params.q = q
+		const res = await api.get('/api/vehicles', {
+			params,
+			responseType: 'blob',
+		})
+		const url = window.URL.createObjectURL(new Blob([res.data]))
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `units-${Date.now()}.csv`
+		document.body.appendChild(a)
+		a.click()
+		a.remove()
+		window.URL.revokeObjectURL(url)
+	}
+
 	const columns: Array<Column<Vehicle & { actions?: null }>> = [
 		{
 			key: 'type',
@@ -172,7 +189,7 @@ function VehiclesPage() {
 		},
 		{
 			key: 'plate',
-			header: 'Plate',
+			header: 'Unit #',
 			render: row => (
 				<NavLink to={`/vehicles/${row.id}`} className='text-sky-600 underline'>
 					{row.plate || '—'}
@@ -253,9 +270,18 @@ function VehiclesPage() {
 						type='text'
 						value={qRaw}
 						onChange={e => handleSetQ(e.target.value)}
-						placeholder='Search units (plate or VIN)...'
+						placeholder='Search units (unit # or VIN)...'
 						className='w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300'
 					/>
+					<button
+						type='button'
+						onClick={handleExport}
+						className='inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800'
+						title='Download CSV'
+					>
+						<ArrowDownTrayIcon className='h-4 w-4' />
+						Export
+					</button>
 					<CreateButton onClick={openCreate}>Create Unit</CreateButton>
 				</div>
 			</div>
