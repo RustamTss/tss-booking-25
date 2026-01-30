@@ -261,22 +261,16 @@ func (h *Handler) UpdateRequest(c *fiber.Ctx) error {
 					s = strings.ReplaceAll(s, ">", "&gt;")
 					return s
 				}
-				html := fmt.Sprintf(
-					"<b>Status:</b> %s<br/>"+
-						"<b>Service issue:</b> %s<br/>"+
-						"<b>Driver:</b> %s<br/>"+
-						"<b>Phone:</b> %s<br/>"+
-						"<b>Company:</b> %s<br/>"+
-						"<b>Unit:</b> %s<br/>"+
-						"<b>Start:</b> %s",
-					statusText,
-					escape(r.ServiceIssue),
-					escape(r.DriverName),
-					escape(r.Phone),
-					escape(r.CompanyName),
-					escape(r.UnitNumber),
-					escape(startText),
-				)
+				lines := []string{
+					fmt.Sprintf("<b>Status:</b> %s", statusText),
+					fmt.Sprintf("<b>Service issue:</b> %s", escape(r.ServiceIssue)),
+					fmt.Sprintf("<b>Driver:</b> %s", escape(r.DriverName)),
+					fmt.Sprintf("<b>Phone:</b> %s", escape(r.Phone)),
+					fmt.Sprintf("<b>Company:</b> %s", escape(r.CompanyName)),
+					fmt.Sprintf("<b>Unit:</b> %s", escape(r.UnitNumber)),
+					fmt.Sprintf("<b>Start:</b> %s", escape(startText)),
+				}
+				html := strings.Join(lines, "\n")
 				// best-effort send; do not block or fail the request if send fails
 				go func(contactID, msg string) {
 					_ = h.SendPulse.SendHTML(context.Background(), contactID, msg)
