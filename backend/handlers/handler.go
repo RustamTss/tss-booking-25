@@ -14,18 +14,20 @@ import (
 )
 
 type Handler struct {
-	DB       *mongo.Database
-	JWT      *services.JWTService
-	Telegram *services.TelegramService
-	TZ       *time.Location
+	DB        *mongo.Database
+	JWT       *services.JWTService
+	Telegram  *services.TelegramService
+	SendPulse *services.SendPulseService
+	TZ        *time.Location
 }
 
-func NewHandler(db *mongo.Database, jwt *services.JWTService, tg *services.TelegramService, tz *time.Location) *Handler {
+func NewHandler(db *mongo.Database, jwt *services.JWTService, tg *services.TelegramService, sp *services.SendPulseService, tz *time.Location) *Handler {
 	return &Handler{
-		DB:       db,
-		JWT:      jwt,
-		Telegram: tg,
-		TZ:       tz,
+		DB:        db,
+		JWT:       jwt,
+		Telegram:  tg,
+		SendPulse: sp,
+		TZ:        tz,
 	}
 }
 

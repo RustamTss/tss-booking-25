@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -61,6 +63,8 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	startRaw := get("start_datetime", "Start Date Time", "start_at", "Start")
 	username := get("username", "Username", "telegram_username", "Telegram Username")
 	userID := get("user_id", "User ID", "telegram_user_id", "Telegram User ID", "chat_id")
+	issue := get("service_issue", "Issue", "issue")
+	contactID := get("contact_id", "Contact ID", "contactid")
 
 	var startAt time.Time
 	var startPtr *time.Time
@@ -90,18 +94,20 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	}
 
 	req := models.Request{
-		ID:          primitive.NewObjectID(),
-		CompanyName: company,
-		DriverName:  driver,
-		Phone:       phone,
-		UnitNumber:  unit,
-		StartAt:     startPtr,
-		Status:      models.RequestNew,
-		Source:      "telegram_bot",
-		Username:    username,
-		UserID:      userID,
-		CreatedAt:   h.now(),
-		UpdatedAt:   h.now(),
+		ID:           primitive.NewObjectID(),
+		CompanyName:  company,
+		DriverName:   driver,
+		Phone:        phone,
+		UnitNumber:   unit,
+		StartAt:      startPtr,
+		Status:       models.RequestNew,
+		Source:       "telegram_bot",
+		Username:     username,
+		UserID:       userID,
+		ServiceIssue: issue,
+		ContactID:    contactID,
+		CreatedAt:    h.now(),
+		UpdatedAt:    h.now(),
 	}
 	if _, err := h.DB.Collection(requestCollection).InsertOne(h.ctx(c), req); err != nil {
 		return fiber.ErrInternalServerError
@@ -138,6 +144,7 @@ func (h *Handler) ListRequests(c *fiber.Ctx) error {
 			{"company_name": bson.M{"$regex": q, "$options": "i"}},
 			{"unit_number": bson.M{"$regex": q, "$options": "i"}},
 			{"username": bson.M{"$regex": q, "$options": "i"}},
+			{"service_issue": bson.M{"$regex": q, "$options": "i"}},
 		}
 	}
 	limit := int64(c.QueryInt("limit", 50))
@@ -234,6 +241,49 @@ func (h *Handler) UpdateRequest(c *fiber.Ctx) error {
 		return fiber.ErrNotFound
 	}
 	pushRealtime(models.RealtimeEvent{Type: "request.updated", Data: id.Hex()})
+
+	// Post-update: if status changed to approved/rejected and we have contact_id, send SendPulse message.
+	if payload.Status != nil && (*payload.Status == models.RequestApproved || *payload.Status == models.RequestRejected) {
+		var r models.Request
+		if err := h.DB.Collection(requestCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&r); err == nil {
+			if strings.TrimSpace(r.ContactID) != "" && h.SendPulse != nil {
+				statusText := "Approved ✅"
+				if *payload.Status == models.RequestRejected {
+					statusText = "Rejected ❌"
+				}
+				startText := ""
+				if r.StartAt != nil && !r.StartAt.IsZero() {
+					startText = r.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM")
+				}
+				escape := func(s string) string {
+					s = strings.ReplaceAll(s, "&", "&amp;")
+					s = strings.ReplaceAll(s, "<", "&lt;")
+					s = strings.ReplaceAll(s, ">", "&gt;")
+					return s
+				}
+				html := fmt.Sprintf(
+					"<b>Status:</b> %s<br/>"+
+						"<b>Service issue:</b> %s<br/>"+
+						"<b>Driver:</b> %s<br/>"+
+						"<b>Phone:</b> %s<br/>"+
+						"<b>Company:</b> %s<br/>"+
+						"<b>Unit:</b> %s<br/>"+
+						"<b>Start:</b> %s",
+					statusText,
+					escape(r.ServiceIssue),
+					escape(r.DriverName),
+					escape(r.Phone),
+					escape(r.CompanyName),
+					escape(r.UnitNumber),
+					escape(startText),
+				)
+				// best-effort send; do not block or fail the request if send fails
+				go func(contactID, msg string) {
+					_ = h.SendPulse.SendHTML(context.Background(), contactID, msg)
+				}(r.ContactID, html)
+			}
+		}
+	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 

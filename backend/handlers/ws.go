@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"log"
+	"sync"
 
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
@@ -10,6 +11,7 @@ import (
 )
 
 type hub struct {
+	mu        sync.RWMutex
 	clients   map[*websocket.Conn]bool
 	broadcast chan models.RealtimeEvent
 }
@@ -23,12 +25,24 @@ func init() {
 	go func() {
 		for msg := range wsHub.broadcast {
 			payload, _ := json.Marshal(msg)
+			var toRemove []*websocket.Conn
+			// snapshot under read lock
+			wsHub.mu.RLock()
 			for c := range wsHub.clients {
 				if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
 					log.Println("ws write:", err)
+					toRemove = append(toRemove, c)
+				}
+			}
+			wsHub.mu.RUnlock()
+			// remove broken connections under write lock
+			if len(toRemove) > 0 {
+				wsHub.mu.Lock()
+				for _, c := range toRemove {
 					c.Close()
 					delete(wsHub.clients, c)
 				}
+				wsHub.mu.Unlock()
 			}
 		}
 	}()
@@ -42,9 +56,13 @@ func (h *Handler) WSUpgrade(c *fiber.Ctx) error {
 }
 
 func (h *Handler) WSSocket(c *websocket.Conn) {
+	wsHub.mu.Lock()
 	wsHub.clients[c] = true
+	wsHub.mu.Unlock()
 	defer func() {
+		wsHub.mu.Lock()
 		delete(wsHub.clients, c)
+		wsHub.mu.Unlock()
 		c.Close()
 	}()
 

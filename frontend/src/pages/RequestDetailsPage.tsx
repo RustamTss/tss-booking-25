@@ -24,6 +24,7 @@ export default function RequestDetailsPage() {
 	}
 
 	const rows = [
+		{ label: 'Service Issue', value: fmt(r.service_issue) },
 		{ label: 'Driver', value: fmt(r.driver_name) },
 		{ label: 'Phone', value: fmt(r.phone) },
 		{ label: 'Company', value: fmt(r.company_name) },

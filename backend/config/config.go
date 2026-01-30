@@ -17,6 +17,8 @@ type Config struct {
 	TelegramToken string
 	TelegramChat  string
 	Timezone      *time.Location
+	SendPulseClientID     string
+	SendPulseClientSecret string
 }
 
 func getEnv(key, fallback string) string {
@@ -38,6 +40,8 @@ func Load() (*Config, error) {
 	chat := os.Getenv("TELEGRAM_CHAT_ID")
 	token := os.Getenv("TELEGRAM_TOKEN")
 	tzName := getEnv("TZ", "America/New_York")
+	spID := os.Getenv("SENDPULSE_CLIENT_ID")
+	spSecret := os.Getenv("SENDPULSE_CLIENT_SECRET")
 
 	tz, err := time.LoadLocation(tzName)
 	if err != nil {
@@ -52,5 +56,7 @@ func Load() (*Config, error) {
 		TelegramChat:  chat,
 		TelegramToken: token,
 		Timezone:      tz,
+		SendPulseClientID:     spID,
+		SendPulseClientSecret: spSecret,
 	}, nil
 }

@@ -144,6 +144,8 @@ export interface Request {
 	source?: string
 	username?: string
 	user_id?: string
+	service_issue?: string
+	contact_id?: string
 	created_at: string
 	updated_at: string
 }

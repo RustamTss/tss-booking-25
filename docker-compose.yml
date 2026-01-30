@@ -19,6 +19,8 @@ services:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - TZ=America/New_York
+      - SENDPULSE_CLIENT_ID=131ab7870726f2c5756c226f15ce4a14
+      - SENDPULSE_CLIENT_SECRET=1266e0694db215333a9b1485f23e9de4
     depends_on:
       - mongo
     ports:

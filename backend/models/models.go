@@ -133,18 +133,20 @@ type Booking struct {
 }
 
 type Request struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	CompanyName string             `bson:"company_name" json:"company_name"`
-	DriverName  string             `bson:"driver_name" json:"driver_name"`
-	Phone       string             `bson:"phone" json:"phone"`
-	UnitNumber  string             `bson:"unit_number" json:"unit_number"`
-	StartAt     *time.Time         `bson:"start_at,omitempty" json:"start_at,omitempty"`
-	Status      RequestStatus      `bson:"status" json:"status"`
-	Source      string             `bson:"source,omitempty" json:"source,omitempty"`
-	Username    string             `bson:"username,omitempty" json:"username,omitempty"`
-	UserID      string             `bson:"user_id,omitempty" json:"user_id,omitempty"`
-	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
+	ID           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	CompanyName  string             `bson:"company_name" json:"company_name"`
+	DriverName   string             `bson:"driver_name" json:"driver_name"`
+	Phone        string             `bson:"phone" json:"phone"`
+	UnitNumber   string             `bson:"unit_number" json:"unit_number"`
+	StartAt      *time.Time         `bson:"start_at,omitempty" json:"start_at,omitempty"`
+	Status       RequestStatus      `bson:"status" json:"status"`
+	Source       string             `bson:"source,omitempty" json:"source,omitempty"`
+	Username     string             `bson:"username,omitempty" json:"username,omitempty"`
+	UserID       string             `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	ServiceIssue string             `bson:"service_issue,omitempty" json:"service_issue,omitempty"`
+	ContactID    string             `bson:"contact_id,omitempty" json:"contact_id,omitempty"`
+	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt    time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type AuditLog struct {

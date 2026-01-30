@@ -59,7 +59,9 @@ func main() {
 
 	jwtSvc := services.NewJWTService(cfg.JWTSecret, 24*time.Hour)
 	tgSvc := services.NewTelegramService(cfg.TelegramToken, cfg.TelegramChat)
-	// Load persisted settings at startup so Telegram works without re-saving
+	spSvc := services.NewSendPulseService(cfg.SendPulseClientID, cfg.SendPulseClientSecret)
+	spSvc.StartAutoRefresh(context.Background(), 45*time.Minute)
+
 	{
 		var s models.Settings
 		if err := database.DB.Collection("settings").FindOne(ctx, bson.M{"_id": "global"}).Decode(&s); err == nil {
@@ -70,7 +72,7 @@ func main() {
 	}
 
 	app := fiber.New()
-	h := handlers.NewHandler(database.DB, jwtSvc, tgSvc, cfg.Timezone)
+	h := handlers.NewHandler(database.DB, jwtSvc, tgSvc, spSvc, cfg.Timezone)
 	routes.Register(app, h)
 
 	go func() {

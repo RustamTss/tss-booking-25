@@ -191,6 +191,16 @@ export default function RequestsPage() {
 
 	const columns: Array<Column<Request & { actions?: null }>> = [
 		{
+			key: 'service_issue',
+			header: 'Service Issue',
+			render: r =>
+				r.service_issue ? (
+					<span className='line-clamp-2 max-w-xs'>{r.service_issue}</span>
+				) : (
+					<span className='text-slate-500'>Not set</span>
+				),
+		},
+		{
 			key: 'driver_name',
 			header: 'Driver',
 			render: r => (
@@ -305,7 +315,9 @@ export default function RequestsPage() {
 																(r.company_name || '').toLowerCase()
 														)?.id || ''
 													setForm({
-														complaint: r.driver_name
+														complaint: r.service_issue
+															? r.service_issue
+															: r.driver_name
 															? `Driver: ${r.driver_name}`
 															: '',
 														description: r.phone ? `Phone: ${r.phone}` : '',
