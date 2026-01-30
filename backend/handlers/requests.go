@@ -114,19 +114,53 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	}
 	// Realtime
 	pushRealtime(models.RealtimeEvent{Type: "request.created", Data: req})
-	// Optional telegram summary
-	startText := ""
-	if req.StartAt != nil && !req.StartAt.IsZero() {
-		startText = req.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM")
+	// Group notification in rich format (avoid zero dates and dummy numbers)
+	{
+		startText := ""
+		if req.StartAt != nil && !req.StartAt.IsZero() {
+			startText = req.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM")
+		}
+		escape := func(s string) string {
+			s = strings.ReplaceAll(s, "&", "&amp;")
+			s = strings.ReplaceAll(s, "<", "&lt;")
+			s = strings.ReplaceAll(s, ">", "&gt;")
+			return s
+		}
+		var sb strings.Builder
+		// Header line (no number for requests)
+		sb.WriteString("📨 <b>New service request</b>\n\n")
+		if strings.TrimSpace(req.ServiceIssue) != "" {
+			sb.WriteString("<b>Service issue:</b> ")
+			sb.WriteString(escape(req.ServiceIssue))
+			sb.WriteString("\n")
+		}
+		if strings.TrimSpace(req.DriverName) != "" {
+			sb.WriteString("<b>Driver:</b> ")
+			sb.WriteString(escape(req.DriverName))
+			sb.WriteString("\n")
+		}
+		if strings.TrimSpace(req.Phone) != "" {
+			sb.WriteString("<b>Phone:</b> ")
+			sb.WriteString(escape(req.Phone))
+			sb.WriteString("\n")
+		}
+		if strings.TrimSpace(req.CompanyName) != "" {
+			sb.WriteString("<b>Company:</b> ")
+			sb.WriteString(escape(req.CompanyName))
+			sb.WriteString("\n")
+		}
+		if strings.TrimSpace(req.UnitNumber) != "" {
+			sb.WriteString("<b>Unit:</b> ")
+			sb.WriteString(escape(req.UnitNumber))
+			sb.WriteString("\n")
+		}
+		if startText != "" {
+			sb.WriteString("<b>Start:</b> ")
+			sb.WriteString(escape(startText))
+			sb.WriteString("\n")
+		}
+		_ = h.Telegram.Notify(sb.String())
 	}
-	data := map[string]string{
-		"company_name": req.CompanyName,
-		"driver_name":  req.DriverName,
-		"phone":        req.Phone,
-		"unit_number":  req.UnitNumber,
-		"start_at":     startText,
-	}
-	_ = h.Telegram.Notify(h.renderTelegramFallback("request", models.Booking{}, data))
 	return c.SendStatus(fiber.StatusOK)
 }
 
@@ -242,14 +276,16 @@ func (h *Handler) UpdateRequest(c *fiber.Ctx) error {
 	}
 	pushRealtime(models.RealtimeEvent{Type: "request.updated", Data: id.Hex()})
 
-	// Post-update: if status changed to approved/rejected and we have contact_id, send SendPulse message.
-	if payload.Status != nil && (*payload.Status == models.RequestApproved || *payload.Status == models.RequestRejected) {
+	// Post-update: if status changed to approved/rejected/in_review and we have contact_id, send SendPulse message.
+	if payload.Status != nil && (*payload.Status == models.RequestApproved || *payload.Status == models.RequestRejected || *payload.Status == models.RequestInReview) {
 		var r models.Request
 		if err := h.DB.Collection(requestCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&r); err == nil {
 			if strings.TrimSpace(r.ContactID) != "" && h.SendPulse != nil {
 				statusText := "Approved ✅"
 				if *payload.Status == models.RequestRejected {
 					statusText = "Rejected ❌"
+				} else if *payload.Status == models.RequestInReview {
+					statusText = "Under Review"
 				}
 				startText := ""
 				if r.StartAt != nil && !r.StartAt.IsZero() {
@@ -293,6 +329,28 @@ func (h *Handler) DeleteRequest(c *fiber.Ctx) error {
 	}
 	if res.DeletedCount == 0 {
 		return fiber.ErrNotFound
+	}
+	// Audit who deleted (include email if available)
+	{
+		var actorID primitive.ObjectID
+		var actorEmail string
+		if uid := getUserID(c); uid != "" {
+			if oid, err := primitive.ObjectIDFromHex(uid); err == nil {
+				actorID = oid
+				var u models.User
+				_ = h.DB.Collection(userCollection).FindOne(h.ctx(c), bson.M{"_id": oid}).Decode(&u)
+				actorEmail = u.Email
+			}
+		}
+		_, _ = h.DB.Collection(auditCollection).InsertOne(h.ctx(c), models.AuditLog{
+			ID:        primitive.NewObjectID(),
+			Action:    "request.deleted",
+			Entity:    "request",
+			EntityID:  id,
+			UserID:    actorID,
+			Meta:      bson.M{"email": actorEmail},
+			CreatedAt: h.now(),
+		})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
