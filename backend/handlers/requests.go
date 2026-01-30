@@ -114,7 +114,6 @@ func (h *Handler) RequestWebhook(c *fiber.Ctx) error {
 	}
 	// Realtime
 	pushRealtime(models.RealtimeEvent{Type: "request.created", Data: req})
-	// Group notification in rich format (avoid zero dates and dummy numbers)
 	{
 		startText := ""
 		if req.StartAt != nil && !req.StartAt.IsZero() {
@@ -323,12 +322,51 @@ func (h *Handler) DeleteRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.ErrBadRequest
 	}
+	// Load the request first for notification payload
+	var r models.Request
+	if err := h.DB.Collection(requestCollection).FindOne(h.ctx(c), bson.M{"_id": id}).Decode(&r); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fiber.ErrNotFound
+		}
+		return fiber.ErrInternalServerError
+	}
+
 	res, err := h.DB.Collection(requestCollection).DeleteOne(h.ctx(c), bson.M{"_id": id})
 	if err != nil {
 		return fiber.ErrInternalServerError
 	}
 	if res.DeletedCount == 0 {
 		return fiber.ErrNotFound
+	}
+	// Realtime notify clients
+	pushRealtime(models.RealtimeEvent{Type: "request.deleted", Data: id.Hex()})
+
+	// Notify requester via SendPulse (direct message)
+	if strings.TrimSpace(r.ContactID) != "" && h.SendPulse != nil {
+		statusText := "Deleted 🗑️"
+		startText := ""
+		if r.StartAt != nil && !r.StartAt.IsZero() {
+			startText = r.StartAt.In(h.TZ).Format("01/02/2006, 03:04 PM")
+		}
+		escape := func(s string) string {
+			s = strings.ReplaceAll(s, "&", "&amp;")
+			s = strings.ReplaceAll(s, "<", "&lt;")
+			s = strings.ReplaceAll(s, ">", "&gt;")
+			return s
+		}
+		lines := []string{
+			fmt.Sprintf("<b>Status:</b> %s", statusText),
+			fmt.Sprintf("<b>Service issue:</b> %s", escape(r.ServiceIssue)),
+			fmt.Sprintf("<b>Driver:</b> %s", escape(r.DriverName)),
+			fmt.Sprintf("<b>Phone:</b> %s", escape(r.Phone)),
+			fmt.Sprintf("<b>Company:</b> %s", escape(r.CompanyName)),
+			fmt.Sprintf("<b>Unit:</b> %s", escape(r.UnitNumber)),
+			fmt.Sprintf("<b>Start:</b> %s", escape(startText)),
+		}
+		html := strings.Join(lines, "\n")
+		go func(contactID, msg string) {
+			_ = h.SendPulse.SendHTML(context.Background(), contactID, msg)
+		}(r.ContactID, html)
 	}
 	// Audit who deleted (include email if available)
 	{
